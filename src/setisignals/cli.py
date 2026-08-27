@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Annotated
 
@@ -20,8 +21,18 @@ from setisignals.plotting.rfi_density import compute_rfi_density_grids, plot_rfi
 from setisignals.plotting.waterfall import plot_waterfall
 from setisignals.ray_utils import ray_session
 
-app = typer.Typer(name="setisignals", help="Process SETI@home Listen .spike hit files.")
-plot_app = typer.Typer(name="plot", help="Reproduce figures from the Listen data analysis notes.")
+_CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
+
+app = typer.Typer(
+    name="setisignals",
+    help="Process SETI@home Listen .spike hit files.",
+    context_settings=_CONTEXT_SETTINGS,
+)
+plot_app = typer.Typer(
+    name="plot",
+    help="Reproduce figures from the Listen data analysis notes.",
+    context_settings=_CONTEXT_SETTINGS,
+)
 app.add_typer(plot_app, name="plot")
 
 console = Console()
@@ -29,6 +40,28 @@ console = Console()
 
 def _default_workers() -> int:
     return os.cpu_count() or 1
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        console.print(f"setisignals {_pkg_version('setisignals')}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            "-v",
+            callback=_version_callback,
+            is_eager=True,
+            help="Show the setisignals version and exit.",
+        ),
+    ] = False,
+) -> None:
+    pass
 
 
 def _restrict_on_to_off_epoch(on_data: np.ndarray, off_data: np.ndarray) -> np.ndarray:
