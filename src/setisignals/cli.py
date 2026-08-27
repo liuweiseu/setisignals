@@ -14,6 +14,7 @@ import numpy as np
 
 from setisignals.analysis.rfi import DEFAULT_BIN_WIDTH_HZ, classify_rfi
 from setisignals.analysis.time_utils import restrict_to_epoch
+from setisignals.io.merge import merge_on_off, merge_on_off_text
 from setisignals.io.reader import read_with_progress
 from setisignals.io.writer import write_table
 from setisignals.plotting.power_hist import compute_power_hist, plot_power_hist
@@ -104,6 +105,53 @@ def convert(
 
     write_table(data, output, format)  # type: ignore[arg-type]
     console.print(f"[green]Wrote {len(data):,} rows to {output} ({format})[/green]")
+
+
+@app.command()
+def merge(
+    on: Annotated[Path, typer.Option(help="Path to the on-source .spike file")],
+    off: Annotated[Path, typer.Option(help="Path to the off-source .spike file")],
+    output: Annotated[Path, typer.Option("-o", "--output", help="Output file path")],
+    format: Annotated[
+        str | None,
+        typer.Option(
+            "--format",
+            help="Output format: fits or hdf5. Omit to write a pipe-delimited "
+            ".spike text file (original format) with a `target` field appended.",
+        ),
+    ] = None,
+    workers: Annotated[
+        int | None, typer.Option(help="Number of parallel Ray workers")
+    ] = None,
+) -> None:
+    """Merge an on-source and off-source .spike file into one, with a `target` column.
+
+    Rows are a plain union (all on-source rows, then all off-source rows,
+    unfiltered); the added `target` column is "on" or "off" per row.
+    """
+    if format is not None and format not in ("fits", "hdf5"):
+        raise typer.BadParameter("format must be 'fits' or 'hdf5'")
+    workers = workers or _default_workers()
+
+    if format is None:
+        with ray_session(workers=workers):
+            on_count, off_count = merge_on_off_text(on, off, output, workers=workers)
+        console.print(
+            f"[green]Wrote {on_count + off_count:,} rows ({on_count:,} on + {off_count:,} off) "
+            f"to {output} (.spike text)[/green]"
+        )
+        return
+
+    with ray_session(workers=workers):
+        on_data = read_with_progress(on, workers=workers)
+        off_data = read_with_progress(off, workers=workers)
+
+    merged = merge_on_off(on_data, off_data)
+    write_table(merged, output, format)  # type: ignore[arg-type]
+    console.print(
+        f"[green]Wrote {len(merged):,} rows ({len(on_data):,} on + {len(off_data):,} off) "
+        f"to {output} ({format})[/green]"
+    )
 
 
 @plot_app.command("power-hist")

@@ -59,3 +59,9 @@ def get_dtype(kind: SignalKind) -> np.dtype:
 
 
 SPIKE_DTYPE: np.dtype = dtype_for(SPIKE_FIELDS)
+
+# Extra field added when merging an on-source and off-source file into one
+# table (see io/merge.py): a fixed-width byte string, "on" or "off".
+TARGET_FIELD = FieldSpec("target", "S3", "3A")
+
+SPIKE_WITH_TARGET_DTYPE: np.dtype = dtype_for(SPIKE_FIELDS + (TARGET_FIELD,))

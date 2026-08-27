@@ -41,6 +41,29 @@ Column names/order match the struct field names verbatim. HDF5 output
 stores the table under the fixed dataset name `spike` (i.e.
 `h5py.File(path)["spike"]`).
 
+### `merge` — combine on-source and off-source into one table
+
+```
+setisignals merge --on HIP63121_data/HIP63121.spike --off HIP63121_data/HIP63121_OFF.spike --format fits -o merged.fits
+setisignals merge --on HIP63121_data/HIP63121.spike --off HIP63121_data/HIP63121_OFF.spike -o merged.spike
+```
+
+Concatenates the on-source and off-source hits into a single output (all
+on-source rows first, then all off-source rows — a plain union, no
+filtering) with one extra `target` field (`"on"` or `"off"`) identifying
+which file each row came from. Useful for downstream tools that expect a
+single file with the on/off distinction encoded as data rather than as two
+separate files.
+
+- With `--format fits|hdf5`: parses both inputs and writes a table, as in
+  `convert`.
+- **Without `--format`** (the default): writes a pipe-delimited `.spike`
+  text file in the original format, with `target` appended as an extra
+  field on each line. Every other field is copied byte-for-byte from the
+  source files (no numeric reparsing/reformatting), so this mode is exact
+  and considerably faster than round-tripping through the parsed
+  representation.
+
 ### `plot power-hist` — power distribution histogram
 
 ```
