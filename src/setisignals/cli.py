@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Annotated
@@ -10,6 +11,15 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
+import matplotlib
+
+# Backend must be picked before the first `import matplotlib.pyplot` (here, or
+# in any of the setisignals.plotting modules below) -- matplotlib initializes
+# it lazily on that first import, and switching afterwards is unreliable. With
+# --save (no interactive display needed), force the lightweight Agg backend;
+# it has no GUI-toolkit init cost, unlike the auto-detected interactive one.
+if "--save" in sys.argv:
+    matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
