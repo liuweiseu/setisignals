@@ -41,6 +41,12 @@ Column names/order match the struct field names verbatim. HDF5 output
 stores the table under the fixed dataset name `spike` (i.e.
 `h5py.File(path)["spike"]`).
 
+`--targets <target_time.txt>` (fits/hdf5 only): resolves each row's `time`
+against a `target_time.txt`-style file (whitespace columns `target_name
+start_time end_time start_ra end_ra start_dec end_dec`, Julian dates) and
+writes the matching target name as an added `target_name` column (empty if
+no window contains that row's time). See the on/off ambiguity note below.
+
 ### `merge` — combine on-source and off-source into one table
 
 ```
@@ -63,6 +69,27 @@ separate files.
   source files (no numeric reparsing/reformatting), so this mode is exact
   and considerably faster than round-tripping through the parsed
   representation.
+- `--targets <target_time.txt>` (requires `--format`): same as `convert`'s
+  `--targets`, adding a `target_name` column resolved by row time.
+
+#### The `target_time.txt` on/off overlap
+
+`target_time.txt` records the start/end of an entire observing block per
+target, not individual dwell boundaries — so a target's on-source window and
+its off-source window (e.g. `HIP63121` and `HIP63121_O`) routinely *overlap*
+in time, since real observing alternates on/off/on/off/... within that span.
+A naive "which window contains this time" lookup would misattribute a large
+fraction of hits (verified on the real HIP63121 data: without correction,
+7.5M/9.4M rows were mislabeled `HIP63121_O` including hits that were
+genuinely on-source). To resolve this, `--targets` uses each row's already-
+known on/off origin — the two input files for `merge`, or the input
+filename's `_OFF` suffix for `convert` — to restrict candidate windows to
+off-variant names (matched heuristically: case-insensitive suffix `_OFF`/
+`_OF`/`_O`, since names are truncated to 10 characters at the source) for
+off-source rows, and non-off-variant names otherwise. On the real HIP63121
+data this resolves >99.9% of rows correctly (`on` → `HIP63121`, `off` →
+`HIP63121_O`); the remainder have no matching time window at all (edge-of-
+window rows just outside the recorded start/end).
 
 ### `plot power-hist` — power distribution histogram
 

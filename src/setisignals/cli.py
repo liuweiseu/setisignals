@@ -16,6 +16,7 @@ from setisignals.analysis.rfi import DEFAULT_BIN_WIDTH_HZ, classify_rfi
 from setisignals.analysis.time_utils import restrict_to_epoch
 from setisignals.io.merge import merge_on_off, merge_on_off_text
 from setisignals.io.reader import read_with_progress
+from setisignals.io.targets import looks_like_off_source, parse_targets_file, resolve_target_names
 from setisignals.io.writer import write_table
 from setisignals.plotting.power_hist import compute_power_hist, plot_power_hist
 from setisignals.plotting.rfi_density import compute_rfi_density_grids, plot_rfi_density
@@ -86,11 +87,41 @@ def _restrict_on_to_off_epoch(on_data: np.ndarray, off_data: np.ndarray) -> np.n
     return on_data[mask]
 
 
+_TARGETS_HELP = (
+    "Optional target_time.txt-style file (whitespace columns: "
+    "target_name start_time end_time start_ra end_ra start_dec end_dec, "
+    "Julian dates). Each output row's `time` is looked up against these "
+    "windows and the matching target name is written as a `target_name` "
+    "column (empty if no window contains that time). On-source and "
+    "off-source windows for the same target routinely overlap in this file "
+    "(it records whole observing blocks, not per-dwell boundaries) -- pass "
+    "known on/off origin via `is_off` to resolve that ambiguity."
+)
+
+
+def _resolve_target_name_column(
+    time_jd: np.ndarray,
+    targets_path: Path,
+    workers: int | None,
+    is_off: np.ndarray | None = None,
+) -> np.ndarray:
+    windows = parse_targets_file(targets_path)
+    names = resolve_target_names(time_jd, windows, is_off=is_off, workers=workers)
+    matched = int((names != b"").sum())
+    if matched < len(names):
+        console.print(
+            f"[yellow]{len(names) - matched:,}/{len(names):,} rows had no matching "
+            f"time window in {targets_path}[/yellow]"
+        )
+    return names
+
+
 @app.command()
 def convert(
     input: Annotated[Path, typer.Argument(help="Path to a .spike file")],
     format: Annotated[str, typer.Option("--format", help="Output format: fits or hdf5")],
     output: Annotated[Path, typer.Option("-o", "--output", help="Output file path")],
+    targets: Annotated[Path | None, typer.Option(help=_TARGETS_HELP)] = None,
     workers: Annotated[
         int | None, typer.Option(help="Number of parallel Ray workers")
     ] = None,
@@ -102,8 +133,16 @@ def convert(
 
     with ray_session(workers=workers):
         data = read_with_progress(input, workers=workers)
+        extra_columns = None
+        if targets is not None:
+            is_off = np.full(data.shape, looks_like_off_source(input), dtype=bool)
+            extra_columns = {
+                "target_name": _resolve_target_name_column(
+                    data["time"], targets, workers, is_off=is_off
+                )
+            }
 
-    write_table(data, output, format)  # type: ignore[arg-type]
+    write_table(data, output, format, extra_columns=extra_columns)  # type: ignore[arg-type]
     console.print(f"[green]Wrote {len(data):,} rows to {output} ({format})[/green]")
 
 
@@ -120,6 +159,9 @@ def merge(
             ".spike text file (original format) with a `target` field appended.",
         ),
     ] = None,
+    targets: Annotated[
+        Path | None, typer.Option(help=_TARGETS_HELP + " Requires --format.")
+    ] = None,
     workers: Annotated[
         int | None, typer.Option(help="Number of parallel Ray workers")
     ] = None,
@@ -131,6 +173,8 @@ def merge(
     """
     if format is not None and format not in ("fits", "hdf5"):
         raise typer.BadParameter("format must be 'fits' or 'hdf5'")
+    if targets is not None and format is None:
+        raise typer.BadParameter("--targets requires --format (fits or hdf5)")
     workers = workers or _default_workers()
 
     if format is None:
@@ -145,9 +189,17 @@ def merge(
     with ray_session(workers=workers):
         on_data = read_with_progress(on, workers=workers)
         off_data = read_with_progress(off, workers=workers)
+        merged = merge_on_off(on_data, off_data)
+        extra_columns = None
+        if targets is not None:
+            is_off = merged["target"] == b"off"
+            extra_columns = {
+                "target_name": _resolve_target_name_column(
+                    merged["time"], targets, workers, is_off=is_off
+                )
+            }
 
-    merged = merge_on_off(on_data, off_data)
-    write_table(merged, output, format)  # type: ignore[arg-type]
+    write_table(merged, output, format, extra_columns=extra_columns)  # type: ignore[arg-type]
     console.print(
         f"[green]Wrote {len(merged):,} rows ({len(on_data):,} on + {len(off_data):,} off) "
         f"to {output} ({format})[/green]"
