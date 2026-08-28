@@ -17,7 +17,12 @@ from setisignals.analysis.time_utils import restrict_to_epoch
 from setisignals.io.merge import merge_files, merge_files_text
 from setisignals.io.reader import read_with_progress
 from setisignals.io.table_reader import SUPPORTED_SUFFIXES, read_table_file
-from setisignals.io.targets import looks_like_off_source, parse_targets_file, resolve_target_names
+from setisignals.io.targets import (
+    is_off_variant,
+    looks_like_off_source,
+    parse_targets_file,
+    resolve_target_names,
+)
 from setisignals.io.writer import write_table
 from setisignals.plotting.power_hist import compute_power_hist, plot_power_hist
 from setisignals.plotting.rfi_density import compute_rfi_density_grids, plot_rfi_density
@@ -127,6 +132,40 @@ def _load_table(path: Path) -> np.ndarray:
             "-- produced by `convert` or `merge`"
         )
     return read_table_file(path)
+
+
+def _split_on_off(data: np.ndarray, path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Split a single merged table into (on_data, off_data) via its `target` column.
+
+    On/off plots take one input file (the output of `merge`) rather than
+    separate --on/--off files; the on/off distinction lives in that file's
+    `target` column instead. Off-source rows are identified by
+    `is_off_variant` (a label ending in _OFF/_OF/_O, or exactly "off").
+    """
+    if "target" not in (data.dtype.names or ()):
+        raise typer.BadParameter(
+            f"{path} has no `target` column -- on/off plots need a single file "
+            "produced by `merge` (which has both on-source and off-source rows "
+            "distinguished by `target`)"
+        )
+
+    def _decode(value: object) -> str:
+        return value.decode() if isinstance(value, bytes) else str(value)
+
+    target_col = data["target"]
+    unique_labels = np.unique(target_col)
+    off_labels = [lbl for lbl in unique_labels if is_off_variant(_decode(lbl))]
+    is_off = np.isin(target_col, off_labels) if off_labels else np.zeros(data.size, dtype=bool)
+
+    on_data, off_data = data[~is_off], data[is_off]
+    if on_data.size == 0 or off_data.size == 0:
+        labels_repr = ", ".join(repr(_decode(lbl)) for lbl in unique_labels)
+        raise typer.BadParameter(
+            f"{path}'s `target` column doesn't distinguish on-source from "
+            f"off-source rows (labels found: {labels_repr}) -- on/off plots need "
+            'both (an off-source label should end in _OFF/_OF/_O, or be exactly "off")'
+        )
+    return on_data, off_data
 
 
 @app.command()
@@ -261,6 +300,11 @@ def merge(
 
 
 _PLOT_INPUT_HELP = f"Path to a FITS or HDF5 file ({'/'.join(SUPPORTED_SUFFIXES)}), as produced by `convert`/`merge`"
+_PLOT_ON_OFF_INPUT_HELP = (
+    f"{_PLOT_INPUT_HELP}. Must be a single file with both on-source and "
+    "off-source rows distinguished by its `target` column (i.e. `merge` "
+    "output) -- not a plain `convert` output of one source."
+)
 
 
 @plot_app.command("power-hist")
@@ -283,16 +327,14 @@ def power_hist_cmd(
 
 @plot_app.command("waterfall")
 def waterfall_cmd(
-    on: Annotated[Path, typer.Option(help=f"On-source input. {_PLOT_INPUT_HELP}")],
-    off: Annotated[Path, typer.Option(help=f"Off-source input. {_PLOT_INPUT_HELP}")],
+    input: Annotated[Path, typer.Argument(help=_PLOT_ON_OFF_INPUT_HELP)],
     output: Annotated[Path, typer.Option("-o", "--output")] = Path("waterfall.png"),
     workers: Annotated[int | None, typer.Option()] = None,
     expected_sessions: Annotated[int | None, typer.Option()] = 3,
 ) -> None:
     """Reproduce the on/off frequency-time waterfall scatter plot (approximate)."""
     workers = workers or _default_workers()
-    on_data = _load_table(on)
-    off_data = _load_table(off)
+    on_data, off_data = _split_on_off(_load_table(input), input)
     with ray_session(workers=workers):
         on_data = _restrict_on_to_off_epoch(on_data, off_data)
     plot_waterfall(on_data, off_data, output, expected_sessions=expected_sessions)
@@ -301,8 +343,7 @@ def waterfall_cmd(
 
 @plot_app.command("rfi")
 def rfi_cmd(
-    on: Annotated[Path, typer.Option(help=f"On-source input. {_PLOT_INPUT_HELP}")],
-    off: Annotated[Path, typer.Option(help=f"Off-source input. {_PLOT_INPUT_HELP}")],
+    input: Annotated[Path, typer.Argument(help=_PLOT_ON_OFF_INPUT_HELP)],
     output: Annotated[Path, typer.Option("-o", "--output")] = Path("rfi_density.png"),
     workers: Annotated[int | None, typer.Option()] = None,
     bin_width_hz: Annotated[float, typer.Option()] = DEFAULT_BIN_WIDTH_HZ,
@@ -310,8 +351,7 @@ def rfi_cmd(
 ) -> None:
     """Reproduce the RFI-vs-Clean grayscale density pair (approximate)."""
     workers = workers or _default_workers()
-    on_data = _load_table(on)
-    off_data = _load_table(off)
+    on_data, off_data = _split_on_off(_load_table(input), input)
     with ray_session(workers=workers, num_gpus=1 if gpu else 0):
         on_data = _restrict_on_to_off_epoch(on_data, off_data)
         on_is_rfi, off_is_rfi = classify_rfi(
@@ -329,16 +369,14 @@ def rfi_cmd(
 
 @plot_app.command("all")
 def plot_all_cmd(
-    on: Annotated[Path, typer.Option(help=f"On-source input. {_PLOT_INPUT_HELP}")],
-    off: Annotated[Path, typer.Option(help=f"Off-source input. {_PLOT_INPUT_HELP}")],
+    input: Annotated[Path, typer.Argument(help=_PLOT_ON_OFF_INPUT_HELP)],
     outdir: Annotated[Path, typer.Option()] = Path("."),
     workers: Annotated[int | None, typer.Option()] = None,
 ) -> None:
     """Generate all three figures (power-hist, waterfall, rfi) in one Ray session."""
     workers = workers or _default_workers()
     outdir.mkdir(parents=True, exist_ok=True)
-    on_data = _load_table(on)
-    off_data = _load_table(off)
+    on_data, off_data = _split_on_off(_load_table(input), input)
 
     with ray_session(workers=workers):
         bin_edges, counts = compute_power_hist(

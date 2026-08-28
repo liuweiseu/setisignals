@@ -44,12 +44,15 @@ def parse_targets_file(path: Path) -> list[TargetWindow]:
 
 
 def is_off_variant(name: str) -> bool:
-    """Heuristic: does this target_time.txt name look like an off-source pointing?
+    """Heuristic: does this name look like an off-source pointing?
 
-    Names are truncated to 10 characters at the source, so a full "_OFF"
-    suffix may itself be cut down to "_OF" or "_O" (e.g. "HIP63121_O").
+    Matches target_time.txt-style truncated suffixes (names are truncated
+    to 10 characters at the source, so a full "_OFF" suffix may itself be
+    cut down to "_OF" or "_O", e.g. "HIP63121_O") as well as a bare "off"
+    label (e.g. a `merge --targets off` literal).
     """
-    return name.upper().endswith(("_OFF", "_OF", "_O"))
+    upper = name.strip().upper()
+    return upper == "OFF" or upper.endswith(("_OFF", "_OF", "_O"))
 
 
 def looks_like_off_source(path: Path) -> bool:

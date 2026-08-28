@@ -107,16 +107,23 @@ and non-off-variant names otherwise. On the real HIP63121 data this resolves
 ### `plot` — reproduce figures (FITS/HDF5 input only)
 
 `plot` commands read the standard table formats this tool writes, not raw
-`.spike` text — run `convert`/`merge` first:
+`.spike` text, and every `plot` command takes exactly **one** input file
+(`.fits`/`.fit`/`.h5`/`.hdf5`; passing a `.spike` file is rejected with a
+clear error).
+
+`plot power-hist` accepts any single `convert` or `merge` output. The other
+three (`waterfall`, `rfi`, `all`) compare on-source against off-source, so
+their one input must be a **`merge` output** whose `target` column
+distinguishes on-source rows from off-source rows (an off-source label is
+recognized if it ends in `_OFF`/`_OF`/`_O`, or is exactly `"off"`,
+case-insensitive — matching `merge`'s own default filename-stem labels and
+its `_OFF`-suffix convention) — a plain `convert` output of a single source
+has no such column and is rejected with a clear error.
 
 ```
 setisignals convert HIP63121_data/HIP63121.spike --format fits -o on.fits
-setisignals convert HIP63121_data/HIP63121_OFF.spike --format fits -o off.fits
+setisignals merge HIP63121_data/HIP63121.spike HIP63121_data/HIP63121_OFF.spike --format fits -o merged.fits
 ```
-
-Any `plot` input must have a `.fits`/`.fit`/`.h5`/`.hdf5` extension (either
-format works, mixed is fine too); passing a `.spike` file is rejected with
-a clear error.
 
 #### `plot power-hist` — power distribution histogram
 
@@ -130,7 +137,7 @@ Figure 2 style.
 #### `plot waterfall` — on/off frequency-time scatter
 
 ```
-setisignals plot waterfall --on on.fits --off off.fits -o waterfall.png
+setisignals plot waterfall merged.fits -o waterfall.png
 ```
 
 Reproduces the paper's Figure 3: on-source hits in cyan, off-source in
@@ -139,7 +146,7 @@ magenta.
 #### `plot rfi` — RFI-vs-Clean density pair
 
 ```
-setisignals plot rfi --on on.fits --off off.fits -o rfi_density.png
+setisignals plot rfi merged.fits -o rfi_density.png
 ```
 
 Grayscale, log-scaled 2D histograms (frequency x time) splitting hits into
@@ -148,7 +155,7 @@ RFI vs. Clean.
 #### `plot all` — generate all three figures
 
 ```
-setisignals plot all --on on.fits --off off.fits --outdir figures/
+setisignals plot all merged.fits --outdir figures/
 ```
 
 All commands accept `--workers N` (default: CPU count) to control Ray

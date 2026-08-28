@@ -56,8 +56,11 @@ def test_is_off_variant_heuristic():
     assert is_off_variant("HIP63121_O")  # truncated "_OFF" -> "_O"
     assert is_off_variant("And_XI_off")
     assert is_off_variant("HIP11048_OFF")
+    assert is_off_variant("off")  # bare label, e.g. `merge --targets off`
+    assert is_off_variant("OFF")
     assert not is_off_variant("HIP63121")
     assert not is_off_variant("3C249_1")
+    assert not is_off_variant("on")
 
 
 def test_looks_like_off_source():
