@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from rich.console import Console
 
 import matplotlib
 
@@ -39,8 +38,10 @@ from setisignals.plotting.power_hist import compute_power_hist, plot_power_hist
 from setisignals.plotting.rfi_density import compute_rfi_density_grids, plot_rfi_density
 from setisignals.plotting.waterfall import plot_waterfall
 from setisignals.ray_utils import ray_session
+from setisignals.utils import get_logger
 
 _CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
+_DEFAULT_LOG_DIR = Path("logs")
 
 app = typer.Typer(
     name="setisignals",
@@ -54,7 +55,9 @@ plot_app = typer.Typer(
 )
 app.add_typer(plot_app, name="plot")
 
-console = Console()
+# Console-only until `main()` below reconfigures it with the resolved
+# --log-dir (file logging needs the parsed CLI option, not available yet here).
+logger = get_logger(__name__)
 
 
 def _default_workers() -> int:
@@ -63,7 +66,7 @@ def _default_workers() -> int:
 
 def _version_callback(value: bool) -> None:
     if value:
-        console.print(f"setisignals {_pkg_version('setisignals')}")
+        print(f"setisignals {_pkg_version('setisignals')}")
         raise typer.Exit()
 
 
@@ -79,8 +82,13 @@ def main(
             help="Show the setisignals version and exit.",
         ),
     ] = False,
+    log_dir: Annotated[
+        Path,
+        typer.Option("--log-dir", help="Directory for log files (created if it doesn't exist)."),
+    ] = _DEFAULT_LOG_DIR,
 ) -> None:
-    pass
+    global logger
+    logger = get_logger(__name__, log_dir=log_dir)
 
 
 def _restrict_on_to_off_epoch(on_data: np.ndarray, off_data: np.ndarray) -> np.ndarray:
@@ -97,9 +105,9 @@ def _restrict_on_to_off_epoch(on_data: np.ndarray, off_data: np.ndarray) -> np.n
     ref_range = (off_data["time"].min(), off_data["time"].max())
     mask = restrict_to_epoch(on_data["time"], ref_range)
     if mask.sum() < on_data.size:
-        console.print(
-            f"[yellow]Restricted on-source data to {mask.sum():,}/{on_data.size:,} "
-            "rows matching the off-source observing epoch[/yellow]"
+        logger.warning(
+            f"Restricted on-source data to {mask.sum():,}/{on_data.size:,} "
+            "rows matching the off-source observing epoch"
         )
     return on_data[mask]
 
@@ -128,9 +136,9 @@ def _resolve_target_column(
     names = resolve_target_names(time_jd, windows, is_off=is_off, workers=workers)
     matched = int((names != b"").sum())
     if matched < len(names):
-        console.print(
-            f"[yellow]{len(names) - matched:,}/{len(names):,} rows had no matching "
-            f"time window in {targets_path}[/yellow]"
+        logger.warning(
+            f"{len(names) - matched:,}/{len(names):,} rows had no matching "
+            f"time window in {targets_path}"
         )
     return names
 
@@ -211,7 +219,7 @@ def convert(
                 }
 
     write_table(data, output, format, extra_columns=extra_columns)  # type: ignore[arg-type]
-    console.print(f"[green]Wrote {len(data):,} rows to {output} ({format})[/green]")
+    logger.info(f"Wrote {len(data):,} rows to {output} ({format})")
 
 
 _MERGE_TARGETS_HELP = (
@@ -281,9 +289,7 @@ def merge(
         with ray_session(workers=workers):
             counts = merge_files_text(files, row_labels, output, workers=workers)
         summary = ", ".join(f"{c:,} {lbl}" for c, lbl in zip(counts, row_labels))
-        console.print(
-            f"[green]Wrote {sum(counts):,} rows ({summary}) to {output} (.spike text)[/green]"
-        )
+        logger.info(f"Wrote {sum(counts):,} rows ({summary}) to {output} (.spike text)")
         return
 
     with ray_session(workers=workers):
@@ -307,7 +313,7 @@ def merge(
 
     write_table(merged, output, format, extra_columns=extra_columns)  # type: ignore[arg-type]
     summary = ", ".join(f"{arr.size:,} {lbl}" for arr, lbl in zip(arrays, row_labels))
-    console.print(f"[green]Wrote {len(merged):,} rows ({summary}) to {output} ({format})[/green]")
+    logger.info(f"Wrote {len(merged):,} rows ({summary}) to {output} ({format})")
 
 
 _PLOT_INPUT_HELP = f"Path to a FITS or HDF5 file ({'/'.join(SUPPORTED_SUFFIXES)}), as produced by `convert`/`merge`"
@@ -337,7 +343,7 @@ def power_hist_cmd(
         )
     plot_power_hist(bin_edges, counts, output if save else None, source_name=input.stem)
     if save:
-        console.print(f"[green]Wrote {output}[/green]")
+        logger.info(f"Wrote {output}")
     else:
         plt.show()
 
@@ -365,7 +371,7 @@ def waterfall_cmd(
         source_name=input.stem,
     )
     if save:
-        console.print(f"[green]Wrote {output}[/green]")
+        logger.info(f"Wrote {output}")
     else:
         plt.show()
 
@@ -399,7 +405,7 @@ def rfi_cmd(
         rfi_grid, clean_grid, freq_edges, time_edges, output if save else None, source_name=input.stem
     )
     if save:
-        console.print(f"[green]Wrote {output}[/green]")
+        logger.info(f"Wrote {output}")
     else:
         plt.show()
 
@@ -454,7 +460,7 @@ def plot_all_cmd(
         )
 
     if save:
-        console.print(f"[green]Wrote power_hist.png, waterfall.png, rfi_density.png to {outdir}[/green]")
+        logger.info(f"Wrote power_hist.png, waterfall.png, rfi_density.png to {outdir}")
     else:
         plt.show()
 
