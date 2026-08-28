@@ -91,15 +91,17 @@ _TARGETS_HELP = (
     "Optional target_time.txt-style file (whitespace columns: "
     "target_name start_time end_time start_ra end_ra start_dec end_dec, "
     "Julian dates). Each output row's `time` is looked up against these "
-    "windows and the matching target name is written as a `target_name` "
-    "column (empty if no window contains that time). On-source and "
-    "off-source windows for the same target routinely overlap in this file "
-    "(it records whole observing blocks, not per-dwell boundaries) -- pass "
-    "known on/off origin via `is_off` to resolve that ambiguity."
+    "windows and the matching target name is written into a `target` "
+    "column (empty if no window contains that time; for `merge` this "
+    "replaces the plain on/off label with the resolved target name). "
+    "On-source and off-source windows for the same target routinely "
+    "overlap in this file (it records whole observing blocks, not "
+    "per-dwell boundaries); the row's already-known on/off origin is used "
+    "automatically to resolve that ambiguity."
 )
 
 
-def _resolve_target_name_column(
+def _resolve_target_column(
     time_jd: np.ndarray,
     targets_path: Path,
     workers: int | None,
@@ -137,7 +139,7 @@ def convert(
         if targets is not None:
             is_off = np.full(data.shape, looks_like_off_source(input), dtype=bool)
             extra_columns = {
-                "target_name": _resolve_target_name_column(
+                "target": _resolve_target_column(
                     data["time"], targets, workers, is_off=is_off
                 )
             }
@@ -194,7 +196,9 @@ def merge(
         if targets is not None:
             is_off = merged["target"] == b"off"
             extra_columns = {
-                "target_name": _resolve_target_name_column(
+                # Replaces the plain on/off `target` label with the resolved
+                # target name (e.g. "HIP63121" / "HIP63121_O").
+                "target": _resolve_target_column(
                     merged["time"], targets, workers, is_off=is_off
                 )
             }

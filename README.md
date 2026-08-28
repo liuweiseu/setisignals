@@ -44,8 +44,8 @@ stores the table under the fixed dataset name `spike` (i.e.
 `--targets <target_time.txt>` (fits/hdf5 only): resolves each row's `time`
 against a `target_time.txt`-style file (whitespace columns `target_name
 start_time end_time start_ra end_ra start_dec end_dec`, Julian dates) and
-writes the matching target name as an added `target_name` column (empty if
-no window contains that row's time). See the on/off ambiguity note below.
+writes the matching target name as an added `target` column (empty if no
+window contains that row's time). See the on/off ambiguity note below.
 
 ### `merge` — combine on-source and off-source into one table
 
@@ -70,7 +70,10 @@ separate files.
   and considerably faster than round-tripping through the parsed
   representation.
 - `--targets <target_time.txt>` (requires `--format`): same as `convert`'s
-  `--targets`, adding a `target_name` column resolved by row time.
+  `--targets`, but since `merge` already has a `target` column holding the
+  on/off label, this *replaces* it in place with the resolved target name
+  (e.g. `"HIP63121"` / `"HIP63121_O"`) — one `target` column either way,
+  never both.
 
 #### The `target_time.txt` on/off overlap
 
