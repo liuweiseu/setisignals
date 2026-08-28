@@ -104,37 +104,51 @@ and non-off-variant names otherwise. On the real HIP63121 data this resolves
 → `HIP63121_O`); the remainder have no matching time window at all
 (edge-of-window rows just outside the recorded start/end).
 
-### `plot power-hist` — power distribution histogram
+### `plot` — reproduce figures (FITS/HDF5 input only)
+
+`plot` commands read the standard table formats this tool writes, not raw
+`.spike` text — run `convert`/`merge` first:
 
 ```
-setisignals plot power-hist HIP63121_data/HIP63121.spike -o power_hist.png
+setisignals convert HIP63121_data/HIP63121.spike --format fits -o on.fits
+setisignals convert HIP63121_data/HIP63121_OFF.spike --format fits -o off.fits
+```
+
+Any `plot` input must have a `.fits`/`.fit`/`.h5`/`.hdf5` extension (either
+format works, mixed is fine too); passing a `.spike` file is rejected with
+a clear error.
+
+#### `plot power-hist` — power distribution histogram
+
+```
+setisignals plot power-hist on.fits -o power_hist.png
 ```
 
 Log-log histogram of `peak_power/mean_power`, reproducing the paper's
 Figure 2 style.
 
-### `plot waterfall` — on/off frequency-time scatter
+#### `plot waterfall` — on/off frequency-time scatter
 
 ```
-setisignals plot waterfall --on HIP63121_data/HIP63121.spike --off HIP63121_data/HIP63121_OFF.spike -o waterfall.png
+setisignals plot waterfall --on on.fits --off off.fits -o waterfall.png
 ```
 
 Reproduces the paper's Figure 3: on-source hits in cyan, off-source in
 magenta.
 
-### `plot rfi` — RFI-vs-Clean density pair
+#### `plot rfi` — RFI-vs-Clean density pair
 
 ```
-setisignals plot rfi --on HIP63121_data/HIP63121.spike --off HIP63121_data/HIP63121_OFF.spike -o rfi_density.png
+setisignals plot rfi --on on.fits --off off.fits -o rfi_density.png
 ```
 
 Grayscale, log-scaled 2D histograms (frequency x time) splitting hits into
 RFI vs. Clean.
 
-### `plot all` — generate all three figures
+#### `plot all` — generate all three figures
 
 ```
-setisignals plot all --on HIP63121_data/HIP63121.spike --off HIP63121_data/HIP63121_OFF.spike --outdir figures/
+setisignals plot all --on on.fits --off off.fits --outdir figures/
 ```
 
 All commands accept `--workers N` (default: CPU count) to control Ray

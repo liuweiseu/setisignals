@@ -16,6 +16,7 @@ from setisignals.analysis.rfi import DEFAULT_BIN_WIDTH_HZ, classify_rfi
 from setisignals.analysis.time_utils import restrict_to_epoch
 from setisignals.io.merge import merge_files, merge_files_text
 from setisignals.io.reader import read_with_progress
+from setisignals.io.table_reader import SUPPORTED_SUFFIXES, read_table_file
 from setisignals.io.targets import looks_like_off_source, parse_targets_file, resolve_target_names
 from setisignals.io.writer import write_table
 from setisignals.plotting.power_hist import compute_power_hist, plot_power_hist
@@ -116,6 +117,16 @@ def _resolve_target_column(
             f"time window in {targets_path}[/yellow]"
         )
     return names
+
+
+def _load_table(path: Path) -> np.ndarray:
+    """Load a `plot`-command input file, requiring FITS or HDF5."""
+    if path.suffix.lower() not in SUPPORTED_SUFFIXES:
+        raise typer.BadParameter(
+            f"{path} must be a FITS or HDF5 file ({'/'.join(SUPPORTED_SUFFIXES)}) "
+            "-- produced by `convert` or `merge`"
+        )
+    return read_table_file(path)
 
 
 @app.command()
@@ -249,17 +260,20 @@ def merge(
     console.print(f"[green]Wrote {len(merged):,} rows ({summary}) to {output} ({format})[/green]")
 
 
+_PLOT_INPUT_HELP = f"Path to a FITS or HDF5 file ({'/'.join(SUPPORTED_SUFFIXES)}), as produced by `convert`/`merge`"
+
+
 @plot_app.command("power-hist")
 def power_hist_cmd(
-    input: Annotated[Path, typer.Argument(help="Path to a .spike file")],
+    input: Annotated[Path, typer.Argument(help=_PLOT_INPUT_HELP)],
     output: Annotated[Path, typer.Option("-o", "--output")] = Path("power_hist.png"),
     workers: Annotated[int | None, typer.Option()] = None,
     n_bins: Annotated[int, typer.Option()] = 100,
 ) -> None:
     """Reproduce the power/mean-power distribution histogram."""
     workers = workers or _default_workers()
+    data = _load_table(input)
     with ray_session(workers=workers):
-        data = read_with_progress(input, workers=workers)
         bin_edges, counts = compute_power_hist(
             data["peak_power"], data["mean_power"], n_bins=n_bins, workers=workers
         )
@@ -269,17 +283,17 @@ def power_hist_cmd(
 
 @plot_app.command("waterfall")
 def waterfall_cmd(
-    on: Annotated[Path, typer.Option(help="Path to the on-source .spike file")],
-    off: Annotated[Path, typer.Option(help="Path to the off-source .spike file")],
+    on: Annotated[Path, typer.Option(help=f"On-source input. {_PLOT_INPUT_HELP}")],
+    off: Annotated[Path, typer.Option(help=f"Off-source input. {_PLOT_INPUT_HELP}")],
     output: Annotated[Path, typer.Option("-o", "--output")] = Path("waterfall.png"),
     workers: Annotated[int | None, typer.Option()] = None,
     expected_sessions: Annotated[int | None, typer.Option()] = 3,
 ) -> None:
     """Reproduce the on/off frequency-time waterfall scatter plot (approximate)."""
     workers = workers or _default_workers()
+    on_data = _load_table(on)
+    off_data = _load_table(off)
     with ray_session(workers=workers):
-        on_data = read_with_progress(on, workers=workers)
-        off_data = read_with_progress(off, workers=workers)
         on_data = _restrict_on_to_off_epoch(on_data, off_data)
     plot_waterfall(on_data, off_data, output, expected_sessions=expected_sessions)
     console.print(f"[green]Wrote {output}[/green]")
@@ -287,8 +301,8 @@ def waterfall_cmd(
 
 @plot_app.command("rfi")
 def rfi_cmd(
-    on: Annotated[Path, typer.Option(help="Path to the on-source .spike file")],
-    off: Annotated[Path, typer.Option(help="Path to the off-source .spike file")],
+    on: Annotated[Path, typer.Option(help=f"On-source input. {_PLOT_INPUT_HELP}")],
+    off: Annotated[Path, typer.Option(help=f"Off-source input. {_PLOT_INPUT_HELP}")],
     output: Annotated[Path, typer.Option("-o", "--output")] = Path("rfi_density.png"),
     workers: Annotated[int | None, typer.Option()] = None,
     bin_width_hz: Annotated[float, typer.Option()] = DEFAULT_BIN_WIDTH_HZ,
@@ -296,9 +310,9 @@ def rfi_cmd(
 ) -> None:
     """Reproduce the RFI-vs-Clean grayscale density pair (approximate)."""
     workers = workers or _default_workers()
+    on_data = _load_table(on)
+    off_data = _load_table(off)
     with ray_session(workers=workers, num_gpus=1 if gpu else 0):
-        on_data = read_with_progress(on, workers=workers)
-        off_data = read_with_progress(off, workers=workers)
         on_data = _restrict_on_to_off_epoch(on_data, off_data)
         on_is_rfi, off_is_rfi = classify_rfi(
             on_data["detection_freq"],
@@ -315,19 +329,18 @@ def rfi_cmd(
 
 @plot_app.command("all")
 def plot_all_cmd(
-    on: Annotated[Path, typer.Option(help="Path to the on-source .spike file")],
-    off: Annotated[Path, typer.Option(help="Path to the off-source .spike file")],
+    on: Annotated[Path, typer.Option(help=f"On-source input. {_PLOT_INPUT_HELP}")],
+    off: Annotated[Path, typer.Option(help=f"Off-source input. {_PLOT_INPUT_HELP}")],
     outdir: Annotated[Path, typer.Option()] = Path("."),
     workers: Annotated[int | None, typer.Option()] = None,
 ) -> None:
     """Generate all three figures (power-hist, waterfall, rfi) in one Ray session."""
     workers = workers or _default_workers()
     outdir.mkdir(parents=True, exist_ok=True)
+    on_data = _load_table(on)
+    off_data = _load_table(off)
 
     with ray_session(workers=workers):
-        on_data = read_with_progress(on, workers=workers)
-        off_data = read_with_progress(off, workers=workers)
-
         bin_edges, counts = compute_power_hist(
             on_data["peak_power"], on_data["mean_power"], workers=workers
         )
