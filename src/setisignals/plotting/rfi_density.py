@@ -9,9 +9,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
@@ -59,9 +56,12 @@ def plot_rfi_density(
     clean_grid: np.ndarray,
     freq_edges: np.ndarray,
     time_edges: np.ndarray,
-    out_path: Path,
+    out_path: Path | None,
     source_name: str | None = None,
 ) -> None:
+    """If ``out_path`` is None, the figure is left open for the caller to
+    display (e.g. via a single ``plt.show()`` covering several figures)
+    instead of being saved to disk."""
     fig, axes = plt.subplots(2, 1, figsize=(8, 10), sharex=True)
     extent = (freq_edges[0], freq_edges[-1], time_edges[0], time_edges[-1])
     norm = mcolors.LogNorm(vmin=1, vmax=max(rfi_grid.max(), clean_grid.max(), 1))
@@ -83,5 +83,6 @@ def plot_rfi_density(
         fig.tight_layout(rect=(0, 0, 1, 0.96))
     else:
         fig.tight_layout()
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
+    if out_path is not None:
+        fig.savefig(out_path, dpi=150)
+        plt.close(fig)

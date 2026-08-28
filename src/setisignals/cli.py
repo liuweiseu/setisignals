@@ -10,6 +10,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 from setisignals.analysis.rfi import DEFAULT_BIN_WIDTH_HZ, classify_rfi
@@ -310,6 +311,9 @@ _PLOT_ON_OFF_INPUT_HELP = (
 @plot_app.command("power-hist")
 def power_hist_cmd(
     input: Annotated[Path, typer.Argument(help=_PLOT_INPUT_HELP)],
+    save: Annotated[
+        bool, typer.Option("--save", help="Save to disk instead of displaying interactively")
+    ] = False,
     output: Annotated[Path, typer.Option("-o", "--output")] = Path("power_hist.png"),
     workers: Annotated[int | None, typer.Option()] = None,
     n_bins: Annotated[int, typer.Option()] = 100,
@@ -321,13 +325,19 @@ def power_hist_cmd(
         bin_edges, counts = compute_power_hist(
             data["peak_power"], data["mean_power"], n_bins=n_bins, workers=workers
         )
-    plot_power_hist(bin_edges, counts, output, source_name=input.stem)
-    console.print(f"[green]Wrote {output}[/green]")
+    plot_power_hist(bin_edges, counts, output if save else None, source_name=input.stem)
+    if save:
+        console.print(f"[green]Wrote {output}[/green]")
+    else:
+        plt.show()
 
 
 @plot_app.command("waterfall")
 def waterfall_cmd(
     input: Annotated[Path, typer.Argument(help=_PLOT_ON_OFF_INPUT_HELP)],
+    save: Annotated[
+        bool, typer.Option("--save", help="Save to disk instead of displaying interactively")
+    ] = False,
     output: Annotated[Path, typer.Option("-o", "--output")] = Path("waterfall.png"),
     workers: Annotated[int | None, typer.Option()] = None,
     expected_sessions: Annotated[int | None, typer.Option()] = 3,
@@ -337,13 +347,25 @@ def waterfall_cmd(
     on_data, off_data = _split_on_off(_load_table(input), input)
     with ray_session(workers=workers):
         on_data = _restrict_on_to_off_epoch(on_data, off_data)
-    plot_waterfall(on_data, off_data, output, expected_sessions=expected_sessions, source_name=input.stem)
-    console.print(f"[green]Wrote {output}[/green]")
+    plot_waterfall(
+        on_data,
+        off_data,
+        output if save else None,
+        expected_sessions=expected_sessions,
+        source_name=input.stem,
+    )
+    if save:
+        console.print(f"[green]Wrote {output}[/green]")
+    else:
+        plt.show()
 
 
 @plot_app.command("rfi")
 def rfi_cmd(
     input: Annotated[Path, typer.Argument(help=_PLOT_ON_OFF_INPUT_HELP)],
+    save: Annotated[
+        bool, typer.Option("--save", help="Save to disk instead of displaying interactively")
+    ] = False,
     output: Annotated[Path, typer.Option("-o", "--output")] = Path("rfi_density.png"),
     workers: Annotated[int | None, typer.Option()] = None,
     bin_width_hz: Annotated[float, typer.Option()] = DEFAULT_BIN_WIDTH_HZ,
@@ -363,30 +385,48 @@ def rfi_cmd(
         rfi_grid, clean_grid, freq_edges, time_edges = compute_rfi_density_grids(
             on_data, off_data, on_is_rfi, off_is_rfi, workers=workers
         )
-    plot_rfi_density(rfi_grid, clean_grid, freq_edges, time_edges, output, source_name=input.stem)
-    console.print(f"[green]Wrote {output}[/green]")
+    plot_rfi_density(
+        rfi_grid, clean_grid, freq_edges, time_edges, output if save else None, source_name=input.stem
+    )
+    if save:
+        console.print(f"[green]Wrote {output}[/green]")
+    else:
+        plt.show()
 
 
 @plot_app.command("all")
 def plot_all_cmd(
     input: Annotated[Path, typer.Argument(help=_PLOT_ON_OFF_INPUT_HELP)],
+    save: Annotated[
+        bool, typer.Option("--save", help="Save to disk instead of displaying interactively")
+    ] = False,
     outdir: Annotated[Path, typer.Option()] = Path("."),
     workers: Annotated[int | None, typer.Option()] = None,
 ) -> None:
-    """Generate all three figures (power-hist, waterfall, rfi) in one Ray session."""
+    """Generate all three figures (power-hist, waterfall, rfi) in one Ray session.
+
+    Without --save, all three figures are displayed interactively at once."""
     workers = workers or _default_workers()
-    outdir.mkdir(parents=True, exist_ok=True)
+    if save:
+        outdir.mkdir(parents=True, exist_ok=True)
     on_data, off_data = _split_on_off(_load_table(input), input)
 
     with ray_session(workers=workers):
         bin_edges, counts = compute_power_hist(
             on_data["peak_power"], on_data["mean_power"], workers=workers
         )
-        plot_power_hist(bin_edges, counts, outdir / "power_hist.png", source_name=input.stem)
+        plot_power_hist(
+            bin_edges, counts, outdir / "power_hist.png" if save else None, source_name=input.stem
+        )
 
         on_epoch_data = _restrict_on_to_off_epoch(on_data, off_data)
 
-        plot_waterfall(on_epoch_data, off_data, outdir / "waterfall.png", source_name=input.stem)
+        plot_waterfall(
+            on_epoch_data,
+            off_data,
+            outdir / "waterfall.png" if save else None,
+            source_name=input.stem,
+        )
 
         on_is_rfi, off_is_rfi = classify_rfi(
             on_epoch_data["detection_freq"], off_data["detection_freq"], workers=workers
@@ -395,10 +435,18 @@ def plot_all_cmd(
             on_epoch_data, off_data, on_is_rfi, off_is_rfi, workers=workers
         )
         plot_rfi_density(
-            rfi_grid, clean_grid, freq_edges, time_edges, outdir / "rfi_density.png", source_name=input.stem
+            rfi_grid,
+            clean_grid,
+            freq_edges,
+            time_edges,
+            outdir / "rfi_density.png" if save else None,
+            source_name=input.stem,
         )
 
-    console.print(f"[green]Wrote power_hist.png, waterfall.png, rfi_density.png to {outdir}[/green]")
+    if save:
+        console.print(f"[green]Wrote power_hist.png, waterfall.png, rfi_density.png to {outdir}[/green]")
+    else:
+        plt.show()
 
 
 if __name__ == "__main__":

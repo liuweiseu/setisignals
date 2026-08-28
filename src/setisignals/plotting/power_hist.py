@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -30,8 +27,14 @@ def compute_power_hist(
 
 
 def plot_power_hist(
-    bin_edges: np.ndarray, counts: np.ndarray, out_path: Path, source_name: str | None = None
+    bin_edges: np.ndarray,
+    counts: np.ndarray,
+    out_path: Path | None,
+    source_name: str | None = None,
 ) -> None:
+    """Render the plot. If ``out_path`` is None, the figure is left open for
+    the caller to display (e.g. via a single ``plt.show()`` covering several
+    figures) instead of being saved to disk."""
     centers = np.sqrt(bin_edges[:-1] * bin_edges[1:])
     fig, ax = plt.subplots(figsize=(7, 6))
     ax.step(centers, counts, where="mid", color="black", linewidth=0.8)
@@ -42,5 +45,6 @@ def plot_power_hist(
     if source_name:
         ax.set_title(f"Power Histogram of {source_name}")
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
+    if out_path is not None:
+        fig.savefig(out_path, dpi=150)
+        plt.close(fig)

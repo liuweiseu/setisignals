@@ -8,9 +8,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -20,7 +17,7 @@ from setisignals.analysis.time_utils import stack_combined_on_off
 def plot_waterfall(
     on: np.ndarray,
     off: np.ndarray,
-    out_path: Path,
+    out_path: Path | None,
     expected_sessions: int | None = 3,
     source_name: str | None = None,
 ) -> None:
@@ -29,7 +26,11 @@ def plot_waterfall(
     ``analysis.time_utils.restrict_to_epoch``) if the on-source file may
     bundle multiple widely-separated epochs. ``expected_sessions`` is the
     expected dwell count *per source* (on and off dwells are assumed
-    interleaved on a shared timeline, see ``stack_combined_on_off``)."""
+    interleaved on a shared timeline, see ``stack_combined_on_off``).
+
+    If ``out_path`` is None, the figure is left open for the caller to
+    display (e.g. via a single ``plt.show()`` covering several figures)
+    instead of being saved to disk."""
     on_y, off_y = stack_combined_on_off(on["time"], off["time"], dwells_per_source=expected_sessions)
 
     fig, ax = plt.subplots(figsize=(8, 8))
@@ -41,5 +42,6 @@ def plot_waterfall(
     if source_name:
         ax.set_title(f"Waterfall of {source_name}")
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
+    if out_path is not None:
+        fig.savefig(out_path, dpi=150)
+        plt.close(fig)
