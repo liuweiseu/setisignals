@@ -22,6 +22,7 @@ def plot_waterfall(
     off: np.ndarray,
     out_path: Path,
     expected_sessions: int | None = 3,
+    source_name: str | None = None,
 ) -> None:
     """Plot the on/off waterfall scatter. Callers should pre-restrict ``on``
     to the observing epoch matching ``off`` (see
@@ -37,6 +38,8 @@ def plot_waterfall(
     ax.set_xlabel("Frequency (Hz)")
     ax.set_ylabel("Time (sec)")
     ax.legend(markerscale=20, loc="upper right")
+    if source_name:
+        ax.set_title(f"Waterfall of {source_name}")
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)

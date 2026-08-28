@@ -321,7 +321,7 @@ def power_hist_cmd(
         bin_edges, counts = compute_power_hist(
             data["peak_power"], data["mean_power"], n_bins=n_bins, workers=workers
         )
-    plot_power_hist(bin_edges, counts, output)
+    plot_power_hist(bin_edges, counts, output, source_name=input.stem)
     console.print(f"[green]Wrote {output}[/green]")
 
 
@@ -337,7 +337,7 @@ def waterfall_cmd(
     on_data, off_data = _split_on_off(_load_table(input), input)
     with ray_session(workers=workers):
         on_data = _restrict_on_to_off_epoch(on_data, off_data)
-    plot_waterfall(on_data, off_data, output, expected_sessions=expected_sessions)
+    plot_waterfall(on_data, off_data, output, expected_sessions=expected_sessions, source_name=input.stem)
     console.print(f"[green]Wrote {output}[/green]")
 
 
@@ -363,7 +363,7 @@ def rfi_cmd(
         rfi_grid, clean_grid, freq_edges, time_edges = compute_rfi_density_grids(
             on_data, off_data, on_is_rfi, off_is_rfi, workers=workers
         )
-    plot_rfi_density(rfi_grid, clean_grid, freq_edges, time_edges, output)
+    plot_rfi_density(rfi_grid, clean_grid, freq_edges, time_edges, output, source_name=input.stem)
     console.print(f"[green]Wrote {output}[/green]")
 
 
@@ -382,11 +382,11 @@ def plot_all_cmd(
         bin_edges, counts = compute_power_hist(
             on_data["peak_power"], on_data["mean_power"], workers=workers
         )
-        plot_power_hist(bin_edges, counts, outdir / "power_hist.png")
+        plot_power_hist(bin_edges, counts, outdir / "power_hist.png", source_name=input.stem)
 
         on_epoch_data = _restrict_on_to_off_epoch(on_data, off_data)
 
-        plot_waterfall(on_epoch_data, off_data, outdir / "waterfall.png")
+        plot_waterfall(on_epoch_data, off_data, outdir / "waterfall.png", source_name=input.stem)
 
         on_is_rfi, off_is_rfi = classify_rfi(
             on_epoch_data["detection_freq"], off_data["detection_freq"], workers=workers
@@ -394,7 +394,9 @@ def plot_all_cmd(
         rfi_grid, clean_grid, freq_edges, time_edges = compute_rfi_density_grids(
             on_epoch_data, off_data, on_is_rfi, off_is_rfi, workers=workers
         )
-        plot_rfi_density(rfi_grid, clean_grid, freq_edges, time_edges, outdir / "rfi_density.png")
+        plot_rfi_density(
+            rfi_grid, clean_grid, freq_edges, time_edges, outdir / "rfi_density.png", source_name=input.stem
+        )
 
     console.print(f"[green]Wrote power_hist.png, waterfall.png, rfi_density.png to {outdir}[/green]")
 

@@ -60,6 +60,7 @@ def plot_rfi_density(
     freq_edges: np.ndarray,
     time_edges: np.ndarray,
     out_path: Path,
+    source_name: str | None = None,
 ) -> None:
     fig, axes = plt.subplots(2, 1, figsize=(8, 10), sharex=True)
     extent = (freq_edges[0], freq_edges[-1], time_edges[0], time_edges[-1])
@@ -77,6 +78,10 @@ def plot_rfi_density(
         ax.set_title(title, color="red" if title == "RFI" else "black")
         ax.set_ylabel("Time (sec)")
     axes[-1].set_xlabel("Frequency (Hz)")
-    fig.tight_layout()
+    if source_name:
+        fig.suptitle(f"RFI Density of {source_name}")
+        fig.tight_layout(rect=(0, 0, 1, 0.96))
+    else:
+        fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)

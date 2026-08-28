@@ -29,7 +29,9 @@ def compute_power_hist(
     return bin_edges, counts
 
 
-def plot_power_hist(bin_edges: np.ndarray, counts: np.ndarray, out_path: Path) -> None:
+def plot_power_hist(
+    bin_edges: np.ndarray, counts: np.ndarray, out_path: Path, source_name: str | None = None
+) -> None:
     centers = np.sqrt(bin_edges[:-1] * bin_edges[1:])
     fig, ax = plt.subplots(figsize=(7, 6))
     ax.step(centers, counts, where="mid", color="black", linewidth=0.8)
@@ -37,6 +39,8 @@ def plot_power_hist(bin_edges: np.ndarray, counts: np.ndarray, out_path: Path) -
     ax.set_yscale("log")
     ax.set_xlabel("Power/Mean Power")
     ax.set_ylabel("Number Found")
+    if source_name:
+        ax.set_title(f"Power Histogram of {source_name}")
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
