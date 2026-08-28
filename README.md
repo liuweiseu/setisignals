@@ -41,27 +41,30 @@ Column names/order match the struct field names verbatim. HDF5 output
 stores the table under the fixed dataset name `spike` (i.e.
 `h5py.File(path)["spike"]`).
 
-`--targets <target_time.txt>` (fits/hdf5 only): resolves each row's `time`
-against a `target_time.txt`-style file (whitespace columns `target_name
-start_time end_time start_ra end_ra start_dec end_dec`, Julian dates) and
-writes the matching target name as an added `target` column (empty if no
-window contains that row's time). See the on/off ambiguity note below.
+`--targets <value>` adds a `target` column, two ways depending on the value:
+- **An existing file path**: treated as a `target_time.txt`-style file
+  (whitespace columns `target_name start_time end_time start_ra end_ra
+  start_dec end_dec`, Julian dates) — each row's `time` is looked up
+  against these windows and the matching target name is written (empty if
+  no window contains that row's time). See the on/off ambiguity note below.
+- **Anything else**: used as a literal label written into `target` for
+  every row, e.g. `--targets HIP63121_OFF`.
 
-### `merge` — combine on-source and off-source into one table
+### `merge` — combine two or more .spike files into one table
 
 ```
-setisignals merge --on HIP63121_data/HIP63121.spike --off HIP63121_data/HIP63121_OFF.spike --format fits -o merged.fits
-setisignals merge --on HIP63121_data/HIP63121.spike --off HIP63121_data/HIP63121_OFF.spike -o merged.spike
+setisignals merge HIP63121_data/HIP63121.spike HIP63121_data/HIP63121_OFF.spike --format fits -o merged.fits
+setisignals merge HIP63121_data/HIP63121.spike HIP63121_data/HIP63121_OFF.spike -o merged.spike
 ```
 
-Concatenates the on-source and off-source hits into a single output (all
-on-source rows first, then all off-source rows — a plain union, no
-filtering) with one extra `target` field (`"on"` or `"off"`) identifying
-which file each row came from. Useful for downstream tools that expect a
-single file with the on/off distinction encoded as data rather than as two
-separate files.
+Takes **two or more** `.spike` files as positional arguments and
+concatenates their hits into a single output (all of the first file's rows,
+then the second's, and so on — a plain union, no filtering) with one extra
+`target` field identifying which file each row came from. Useful for
+downstream tools that expect a single file with the source distinction
+encoded as data rather than as separate files.
 
-- With `--format fits|hdf5`: parses both inputs and writes a table, as in
+- With `--format fits|hdf5`: parses all inputs and writes a table, as in
   `convert`.
 - **Without `--format`** (the default): writes a pipe-delimited `.spike`
   text file in the original format, with `target` appended as an extra
@@ -69,11 +72,18 @@ separate files.
   source files (no numeric reparsing/reformatting), so this mode is exact
   and considerably faster than round-tripping through the parsed
   representation.
-- `--targets <target_time.txt>` (requires `--format`): same as `convert`'s
-  `--targets`, but since `merge` already has a `target` column holding the
-  on/off label, this *replaces* it in place with the resolved target name
-  (e.g. `"HIP63121"` / `"HIP63121_O"`) — one `target` column either way,
-  never both.
+- **`target` labeling** — three ways to control it:
+  - **Default** (no `--targets`): each file's own name (stem) is used as
+    its label, e.g. `"HIP63121"` / `"HIP63121_OFF"`.
+  - **`--targets <target_time.txt>`** (a single existing file path,
+    requires `--format`): time-based lookup, same as `convert`'s
+    `--targets` — resolves each row's actual observed target name and
+    writes it into `target`, replacing the filename-derived default.
+  - **`--targets <label1> --targets <label2> ...`** (one label per input
+    file, repeat the flag once per file, same order as the files):
+    explicit literal labels, e.g.
+    `merge a.spike b.spike --targets X --targets Y` writes `"X"` for every
+    row from `a.spike` and `"Y"` for every row from `b.spike`.
 
 #### The `target_time.txt` on/off overlap
 
@@ -84,15 +94,15 @@ in time, since real observing alternates on/off/on/off/... within that span.
 A naive "which window contains this time" lookup would misattribute a large
 fraction of hits (verified on the real HIP63121 data: without correction,
 7.5M/9.4M rows were mislabeled `HIP63121_O` including hits that were
-genuinely on-source). To resolve this, `--targets` uses each row's already-
-known on/off origin — the two input files for `merge`, or the input
-filename's `_OFF` suffix for `convert` — to restrict candidate windows to
-off-variant names (matched heuristically: case-insensitive suffix `_OFF`/
-`_OF`/`_O`, since names are truncated to 10 characters at the source) for
-off-source rows, and non-off-variant names otherwise. On the real HIP63121
-data this resolves >99.9% of rows correctly (`on` → `HIP63121`, `off` →
-`HIP63121_O`); the remainder have no matching time window at all (edge-of-
-window rows just outside the recorded start/end).
+genuinely on-source). To resolve this, `--targets <target_time.txt>` uses
+each input file's name (via the same `_OFF`-suffix heuristic in both
+`convert` and `merge`) to restrict candidate windows to off-variant names
+(matched heuristically: case-insensitive suffix `_OFF`/`_OF`/`_O`, since
+names are truncated to 10 characters at the source) for off-source files,
+and non-off-variant names otherwise. On the real HIP63121 data this resolves
+>99.9% of rows correctly (`HIP63121.spike` → `HIP63121`, `HIP63121_OFF.spike`
+→ `HIP63121_O`); the remainder have no matching time window at all
+(edge-of-window rows just outside the recorded start/end).
 
 ### `plot power-hist` — power distribution histogram
 

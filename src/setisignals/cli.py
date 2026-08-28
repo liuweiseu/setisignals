@@ -14,7 +14,7 @@ import numpy as np
 
 from setisignals.analysis.rfi import DEFAULT_BIN_WIDTH_HZ, classify_rfi
 from setisignals.analysis.time_utils import restrict_to_epoch
-from setisignals.io.merge import merge_on_off, merge_on_off_text
+from setisignals.io.merge import merge_files, merge_files_text
 from setisignals.io.reader import read_with_progress
 from setisignals.io.targets import looks_like_off_source, parse_targets_file, resolve_target_names
 from setisignals.io.writer import write_table
@@ -88,16 +88,16 @@ def _restrict_on_to_off_epoch(on_data: np.ndarray, off_data: np.ndarray) -> np.n
 
 
 _TARGETS_HELP = (
-    "Optional target_time.txt-style file (whitespace columns: "
-    "target_name start_time end_time start_ra end_ra start_dec end_dec, "
-    "Julian dates). Each output row's `time` is looked up against these "
-    "windows and the matching target name is written into a `target` "
-    "column (empty if no window contains that time; for `merge` this "
-    "replaces the plain on/off label with the resolved target name). "
-    "On-source and off-source windows for the same target routinely "
-    "overlap in this file (it records whole observing blocks, not "
-    "per-dwell boundaries); the row's already-known on/off origin is used "
-    "automatically to resolve that ambiguity."
+    "Either a path to an existing target_time.txt-style file (whitespace "
+    "columns: target_name start_time end_time start_ra end_ra start_dec "
+    "end_dec, Julian dates) -- each row's `time` is looked up against "
+    "these windows and the matching target name is written into a "
+    "`target` column (empty if no window contains that time) -- or, if "
+    "not an existing file, a literal label string written as `target` for "
+    "every row. On-source and off-source windows for the same target "
+    "routinely overlap in target_time.txt (it records whole observing "
+    "blocks, not per-dwell boundaries); the input filename's `_OFF` "
+    "suffix is used automatically to resolve that ambiguity."
 )
 
 
@@ -123,7 +123,7 @@ def convert(
     input: Annotated[Path, typer.Argument(help="Path to a .spike file")],
     format: Annotated[str, typer.Option("--format", help="Output format: fits or hdf5")],
     output: Annotated[Path, typer.Option("-o", "--output", help="Output file path")],
-    targets: Annotated[Path | None, typer.Option(help=_TARGETS_HELP)] = None,
+    targets: Annotated[str | None, typer.Option(help=_TARGETS_HELP)] = None,
     workers: Annotated[
         int | None, typer.Option(help="Number of parallel Ray workers")
     ] = None,
@@ -137,21 +137,40 @@ def convert(
         data = read_with_progress(input, workers=workers)
         extra_columns = None
         if targets is not None:
-            is_off = np.full(data.shape, looks_like_off_source(input), dtype=bool)
-            extra_columns = {
-                "target": _resolve_target_column(
-                    data["time"], targets, workers, is_off=is_off
-                )
-            }
+            if Path(targets).is_file():
+                is_off = np.full(data.shape, looks_like_off_source(input), dtype=bool)
+                extra_columns = {
+                    "target": _resolve_target_column(
+                        data["time"], Path(targets), workers, is_off=is_off
+                    )
+                }
+            else:
+                extra_columns = {
+                    "target": np.full(data.shape, targets.encode(), dtype=f"S{len(targets)}")
+                }
 
     write_table(data, output, format, extra_columns=extra_columns)  # type: ignore[arg-type]
     console.print(f"[green]Wrote {len(data):,} rows to {output} ({format})[/green]")
 
 
+_MERGE_TARGETS_HELP = (
+    "Either a single path to an existing target_time.txt-style file "
+    "(whitespace columns: target_name start_time end_time start_ra end_ra "
+    "start_dec end_dec, Julian dates) -- each row's `time` is looked up "
+    "against these windows and the matching target name is written as its "
+    "`target` value (empty if no window contains that time; requires "
+    "--format) -- or exactly one label string per FILE (repeat --targets "
+    "once per label, same order as FILES), used as that file's literal "
+    "`target` value. Without --targets, each file's own name (stem) is "
+    "used as its label."
+)
+
+
 @app.command()
 def merge(
-    on: Annotated[Path, typer.Option(help="Path to the on-source .spike file")],
-    off: Annotated[Path, typer.Option(help="Path to the off-source .spike file")],
+    files: Annotated[
+        list[Path], typer.Argument(help="Two or more .spike files to merge")
+    ],
     output: Annotated[Path, typer.Option("-o", "--output", help="Output file path")],
     format: Annotated[
         str | None,
@@ -161,53 +180,73 @@ def merge(
             ".spike text file (original format) with a `target` field appended.",
         ),
     ] = None,
-    targets: Annotated[
-        Path | None, typer.Option(help=_TARGETS_HELP + " Requires --format.")
-    ] = None,
+    targets: Annotated[list[str] | None, typer.Option(help=_MERGE_TARGETS_HELP)] = None,
     workers: Annotated[
         int | None, typer.Option(help="Number of parallel Ray workers")
     ] = None,
 ) -> None:
-    """Merge an on-source and off-source .spike file into one, with a `target` column.
+    """Merge two or more .spike files into one, with a `target` column.
 
-    Rows are a plain union (all on-source rows, then all off-source rows,
-    unfiltered); the added `target` column is "on" or "off" per row.
+    Rows are a plain union: all of the first file's rows, then the second
+    file's, and so on, unfiltered.
     """
+    if len(files) < 2:
+        raise typer.BadParameter("merge requires at least 2 files")
     if format is not None and format not in ("fits", "hdf5"):
         raise typer.BadParameter("format must be 'fits' or 'hdf5'")
-    if targets is not None and format is None:
-        raise typer.BadParameter("--targets requires --format (fits or hdf5)")
+
+    targets_file: Path | None = None
+    labels: list[str] | None = None
+    if targets:
+        if len(targets) == 1 and Path(targets[0]).is_file():
+            targets_file = Path(targets[0])
+        elif len(targets) == len(files):
+            labels = targets
+        else:
+            raise typer.BadParameter(
+                f"--targets got {len(targets)} value(s) for {len(files)} files; pass "
+                "either one existing target_time.txt-style file path, or exactly one "
+                "label per file"
+            )
+    if targets_file is not None and format is None:
+        raise typer.BadParameter(
+            "--targets <target_time.txt> (time-based lookup) requires --format"
+        )
+
     workers = workers or _default_workers()
+    row_labels = labels if labels is not None else [f.stem for f in files]
 
     if format is None:
         with ray_session(workers=workers):
-            on_count, off_count = merge_on_off_text(on, off, output, workers=workers)
+            counts = merge_files_text(files, row_labels, output, workers=workers)
+        summary = ", ".join(f"{c:,} {lbl}" for c, lbl in zip(counts, row_labels))
         console.print(
-            f"[green]Wrote {on_count + off_count:,} rows ({on_count:,} on + {off_count:,} off) "
-            f"to {output} (.spike text)[/green]"
+            f"[green]Wrote {sum(counts):,} rows ({summary}) to {output} (.spike text)[/green]"
         )
         return
 
     with ray_session(workers=workers):
-        on_data = read_with_progress(on, workers=workers)
-        off_data = read_with_progress(off, workers=workers)
-        merged = merge_on_off(on_data, off_data)
+        arrays = [read_with_progress(f, workers=workers) for f in files]
+        merged = merge_files(arrays, row_labels)
         extra_columns = None
-        if targets is not None:
-            is_off = merged["target"] == b"off"
+        if targets_file is not None:
+            is_off = np.concatenate(
+                [
+                    np.full(arr.size, looks_like_off_source(f), dtype=bool)
+                    for arr, f in zip(arrays, files)
+                ]
+            )
             extra_columns = {
-                # Replaces the plain on/off `target` label with the resolved
-                # target name (e.g. "HIP63121" / "HIP63121_O").
+                # Replaces the plain per-file `target` label with the
+                # resolved target name (e.g. "HIP63121" / "HIP63121_O").
                 "target": _resolve_target_column(
-                    merged["time"], targets, workers, is_off=is_off
+                    merged["time"], targets_file, workers, is_off=is_off
                 )
             }
 
     write_table(merged, output, format, extra_columns=extra_columns)  # type: ignore[arg-type]
-    console.print(
-        f"[green]Wrote {len(merged):,} rows ({len(on_data):,} on + {len(off_data):,} off) "
-        f"to {output} ({format})[/green]"
-    )
+    summary = ", ".join(f"{arr.size:,} {lbl}" for arr, lbl in zip(arrays, row_labels))
+    console.print(f"[green]Wrote {len(merged):,} rows ({summary}) to {output} ({format})[/green]")
 
 
 @plot_app.command("power-hist")

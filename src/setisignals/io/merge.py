@@ -1,4 +1,4 @@
-"""Merge an on-source and off-source hit file/array into one, with a `target` column."""
+"""Merge two or more hit files/arrays into one, with a `target` column."""
 
 from __future__ import annotations
 
@@ -8,25 +8,32 @@ import numpy as np
 import ray
 
 from setisignals.ray_utils import chunk_file
-from setisignals.schema import SPIKE_DTYPE, SPIKE_WITH_TARGET_DTYPE
-
-ON_LABEL = b"on"
-OFF_LABEL = b"off"
+from setisignals.schema import SPIKE_DTYPE, spike_with_target_dtype
 
 
-def merge_on_off(on: np.ndarray, off: np.ndarray) -> np.ndarray:
-    """Concatenate ``on`` and ``off`` into one array with an added `target` field.
+def merge_files(arrays: list[np.ndarray], labels: list[str]) -> np.ndarray:
+    """Concatenate ``arrays`` into one array with an added `target` field.
 
-    ``target`` is ``b"on"`` for rows from ``on`` and ``b"off"`` for rows from
-    ``off``. Row order is preserved: all ``on`` rows first, then all ``off``
-    rows. No filtering/deduplication is applied — this is a plain union.
+    ``target`` is set to ``labels[i]`` for every row from ``arrays[i]``.
+    Row order is preserved: all of ``arrays[0]``'s rows, then all of
+    ``arrays[1]``'s, and so on. No filtering/deduplication is applied —
+    this is a plain union. ``len(arrays)`` must equal ``len(labels)``.
     """
-    merged = np.empty(on.size + off.size, dtype=SPIKE_WITH_TARGET_DTYPE)
-    for name in SPIKE_DTYPE.names:
-        merged[name][: on.size] = on[name]
-        merged[name][on.size :] = off[name]
-    merged["target"][: on.size] = ON_LABEL
-    merged["target"][on.size :] = OFF_LABEL
+    if len(arrays) != len(labels):
+        raise ValueError(f"got {len(arrays)} arrays but {len(labels)} labels")
+
+    total = sum(a.size for a in arrays)
+    max_len = max((len(label) for label in labels), default=1)
+    dtype = spike_with_target_dtype(max(max_len, 1))
+
+    merged = np.empty(total, dtype=dtype)
+    offset = 0
+    for arr, label in zip(arrays, labels):
+        n = arr.size
+        for name in SPIKE_DTYPE.names:
+            merged[name][offset : offset + n] = arr[name]
+        merged["target"][offset : offset + n] = label.encode()
+        offset += n
     return merged
 
 
@@ -51,36 +58,35 @@ def _label_chunk(path: str, start: int, end: int, label: bytes) -> bytes:
     return bytes(out)
 
 
-def merge_on_off_text(
-    on_path: Path, off_path: Path, out_path: Path, workers: int | None = None
-) -> tuple[int, int]:
-    """Merge two pipe-delimited hit files into one text file, original format.
+def merge_files_text(
+    paths: list[Path], labels: list[str], out_path: Path, workers: int | None = None
+) -> list[int]:
+    """Merge pipe-delimited hit files into one text file, original format.
 
-    Appends a `target` field (``on``/``off``) to each line; all other fields
-    are copied verbatim from the source files (no reparsing/reformatting).
-    Row order is a plain union: all on-source lines, then all off-source
-    lines. Returns ``(on_line_count, off_line_count)``.
+    Appends a `target` field (``labels[i]`` for lines from ``paths[i]``) to
+    each line; all other fields are copied verbatim from the source files
+    (no reparsing/reformatting). Row order is a plain union: all of
+    ``paths[0]``'s lines, then all of ``paths[1]``'s, and so on. Returns the
+    per-file line count, same order as ``paths``. ``len(paths)`` must equal
+    ``len(labels)``.
     """
-    on_path = Path(on_path).resolve()
-    off_path = Path(off_path).resolve()
+    if len(paths) != len(labels):
+        raise ValueError(f"got {len(paths)} paths but {len(labels)} labels")
+
     n_chunks = max(1, workers or 1)
+    per_file_futures = []
+    for path, label in zip(paths, labels):
+        path = Path(path).resolve()
+        ranges = chunk_file(path, n_chunks)
+        futures = [_label_chunk.remote(str(path), s, e, label.encode()) for s, e in ranges]
+        per_file_futures.append(futures)
 
-    on_ranges = chunk_file(on_path, n_chunks)
-    off_ranges = chunk_file(off_path, n_chunks)
-
-    on_futures = [_label_chunk.remote(str(on_path), s, e, ON_LABEL) for s, e in on_ranges]
-    off_futures = [_label_chunk.remote(str(off_path), s, e, OFF_LABEL) for s, e in off_ranges]
-
-    on_parts = ray.get(on_futures)
-    off_parts = ray.get(off_futures)
-
-    on_count = sum(part.count(b"\n") for part in on_parts)
-    off_count = sum(part.count(b"\n") for part in off_parts)
-
+    counts: list[int] = []
     with open(out_path, "wb") as out:
-        for part in on_parts:
-            out.write(part)
-        for part in off_parts:
-            out.write(part)
+        for futures in per_file_futures:
+            parts = ray.get(futures)
+            counts.append(sum(part.count(b"\n") for part in parts))
+            for part in parts:
+                out.write(part)
 
-    return on_count, off_count
+    return counts
