@@ -24,7 +24,7 @@ import numpy as np
 
 from setisignals.analysis.rfi import DEFAULT_BIN_WIDTH_HZ, classify_rfi
 from setisignals.analysis.time_utils import restrict_to_epoch
-from setisignals.io.merge import merge_files, merge_files_text
+from setisignals.io.merge import merge_files
 from setisignals.io.reader import read_with_progress
 from setisignals.io.table_reader import SUPPORTED_SUFFIXES, read_table_file
 from setisignals.io.targets import (
@@ -190,8 +190,10 @@ def _split_on_off(data: np.ndarray, path: Path) -> tuple[np.ndarray, np.ndarray]
 @app.command()
 def convert(
     input: Annotated[Path, typer.Argument(help="Path to a .spike file")],
-    format: Annotated[str, typer.Option("--format", help="Output format: fits or hdf5")],
     output: Annotated[Path, typer.Option("-o", "--output", help="Output file path")],
+    format: Annotated[
+        str, typer.Option("--format", help="Output format: fits or hdf5")
+    ] = "hdf5",
     targets: Annotated[str | None, typer.Option(help=_TARGETS_HELP)] = None,
     workers: Annotated[
         int | None, typer.Option(help="Number of parallel Ray workers")
@@ -227,11 +229,10 @@ _MERGE_TARGETS_HELP = (
     "(whitespace columns: target_name start_time end_time start_ra end_ra "
     "start_dec end_dec, Julian dates) -- each row's `time` is looked up "
     "against these windows and the matching target name is written as its "
-    "`target` value (empty if no window contains that time; requires "
-    "--format) -- or exactly one label string per FILE (repeat --targets "
-    "once per label, same order as FILES), used as that file's literal "
-    "`target` value. Without --targets, each file's own name (stem) is "
-    "used as its label."
+    "`target` value (empty if no window contains that time) -- or exactly "
+    "one label string per FILE (repeat --targets once per label, same "
+    "order as FILES), used as that file's literal `target` value. Without "
+    "--targets, each file's own name (stem) is used as its label."
 )
 
 
@@ -242,13 +243,8 @@ def merge(
     ],
     output: Annotated[Path, typer.Option("-o", "--output", help="Output file path")],
     format: Annotated[
-        str | None,
-        typer.Option(
-            "--format",
-            help="Output format: fits or hdf5. Omit to write a pipe-delimited "
-            ".spike text file (original format) with a `target` field appended.",
-        ),
-    ] = None,
+        str, typer.Option("--format", help="Output format: fits or hdf5")
+    ] = "hdf5",
     targets: Annotated[list[str] | None, typer.Option(help=_MERGE_TARGETS_HELP)] = None,
     workers: Annotated[
         int | None, typer.Option(help="Number of parallel Ray workers")
@@ -261,7 +257,7 @@ def merge(
     """
     if len(files) < 2:
         raise typer.BadParameter("merge requires at least 2 files")
-    if format is not None and format not in ("fits", "hdf5"):
+    if format not in ("fits", "hdf5"):
         raise typer.BadParameter("format must be 'fits' or 'hdf5'")
 
     targets_file: Path | None = None
@@ -277,20 +273,9 @@ def merge(
                 "either one existing target_time.txt-style file path, or exactly one "
                 "label per file"
             )
-    if targets_file is not None and format is None:
-        raise typer.BadParameter(
-            "--targets <target_time.txt> (time-based lookup) requires --format"
-        )
 
     workers = workers or _default_workers()
     row_labels = labels if labels is not None else [f.stem for f in files]
-
-    if format is None:
-        with ray_session(workers=workers):
-            counts = merge_files_text(files, row_labels, output, workers=workers)
-        summary = ", ".join(f"{c:,} {lbl}" for c, lbl in zip(counts, row_labels))
-        logger.info(f"Wrote {sum(counts):,} rows ({summary}) to {output} (.spike text)")
-        return
 
     with ray_session(workers=workers):
         arrays = [read_with_progress(f, workers=workers) for f in files]
