@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 import sys
+import time
+from functools import wraps
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Callable, TypeVar
 
 import typer
 
@@ -59,6 +61,32 @@ app.add_typer(plot_app, name="plot")
 # --log-dir (file logging needs the parsed CLI option, not available yet here).
 logger = get_logger(__name__)
 
+# Set by `main()` from --timestamp, before any command body runs.
+_TIMESTAMP_ENABLED = False
+
+_F = TypeVar("_F", bound=Callable[..., None])
+
+
+def _timed(label: str) -> Callable[[_F], _F]:
+    """Decorator logging a command's total wall-clock runtime when --timestamp is set."""
+
+    def decorator(func: _F) -> _F:
+        @wraps(func)
+        def wrapper(*args: object, **kwargs: object) -> None:
+            if not _TIMESTAMP_ENABLED:
+                func(*args, **kwargs)
+                return
+            start = time.perf_counter()
+            try:
+                func(*args, **kwargs)
+            finally:
+                elapsed = time.perf_counter() - start
+                logger.info(f"[timestamp] {label} completed in {elapsed:.3f}s")
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorator
+
 
 def _default_workers() -> int:
     return os.cpu_count() or 1
@@ -86,9 +114,17 @@ def main(
         Path,
         typer.Option("--log-dir", help="Directory for log files (created if it doesn't exist)."),
     ] = _DEFAULT_LOG_DIR,
+    timestamp: Annotated[
+        bool,
+        typer.Option(
+            "--timestamp",
+            help="Log the command's total wall-clock runtime (high-resolution) on completion.",
+        ),
+    ] = False,
 ) -> None:
-    global logger
+    global logger, _TIMESTAMP_ENABLED
     logger = get_logger(__name__, log_dir=log_dir)
+    _TIMESTAMP_ENABLED = timestamp
 
 
 def _restrict_on_to_off_epoch(on_data: np.ndarray, off_data: np.ndarray) -> np.ndarray:
@@ -188,6 +224,7 @@ def _split_on_off(data: np.ndarray, path: Path) -> tuple[np.ndarray, np.ndarray]
 
 
 @app.command()
+@_timed("convert")
 def convert(
     input: Annotated[Path, typer.Argument(help="Path to a .spike file")],
     output: Annotated[Path, typer.Option("-o", "--output", help="Output file path")],
@@ -237,6 +274,7 @@ _MERGE_TARGETS_HELP = (
 
 
 @app.command()
+@_timed("merge")
 def merge(
     files: Annotated[
         list[Path], typer.Argument(help="Two or more .spike files to merge")
@@ -310,6 +348,7 @@ _PLOT_ON_OFF_INPUT_HELP = (
 
 
 @plot_app.command("power-hist")
+@_timed("plot power-hist")
 def power_hist_cmd(
     input: Annotated[Path, typer.Argument(help=_PLOT_INPUT_HELP)],
     save: Annotated[
@@ -334,6 +373,7 @@ def power_hist_cmd(
 
 
 @plot_app.command("waterfall")
+@_timed("plot waterfall")
 def waterfall_cmd(
     input: Annotated[Path, typer.Argument(help=_PLOT_ON_OFF_INPUT_HELP)],
     save: Annotated[
@@ -362,6 +402,7 @@ def waterfall_cmd(
 
 
 @plot_app.command("rfi")
+@_timed("plot rfi")
 def rfi_cmd(
     input: Annotated[Path, typer.Argument(help=_PLOT_ON_OFF_INPUT_HELP)],
     save: Annotated[
@@ -396,6 +437,7 @@ def rfi_cmd(
 
 
 @plot_app.command("all")
+@_timed("plot all")
 def plot_all_cmd(
     input: Annotated[Path, typer.Argument(help=_PLOT_ON_OFF_INPUT_HELP)],
     save: Annotated[
