@@ -33,12 +33,13 @@ uv sync
 ### `convert` — format conversion
 
 ```
+setisignals convert HIP63121_data/HIP63121.spike -o hip63121.h5
 setisignals convert HIP63121_data/HIP63121.spike --format fits -o hip63121.fits
-setisignals convert HIP63121_data/HIP63121.spike --format hdf5 -o hip63121.h5
 ```
 
-Column names/order match the struct field names verbatim. HDF5 output
-stores the table under the fixed dataset name `spike` (i.e.
+`--format fits|hdf5` selects the output format (default: `hdf5`). Column
+names/order match the struct field names verbatim. HDF5 output stores the
+table under the fixed dataset name `spike` (i.e.
 `h5py.File(path)["spike"]`).
 
 `--targets <value>` adds a `target` column, two ways depending on the value:
@@ -53,8 +54,8 @@ stores the table under the fixed dataset name `spike` (i.e.
 ### `merge` — combine two or more .spike files into one table
 
 ```
+setisignals merge HIP63121_data/HIP63121.spike HIP63121_data/HIP63121_OFF.spike -o merged.h5
 setisignals merge HIP63121_data/HIP63121.spike HIP63121_data/HIP63121_OFF.spike --format fits -o merged.fits
-setisignals merge HIP63121_data/HIP63121.spike HIP63121_data/HIP63121_OFF.spike -o merged.spike
 ```
 
 Takes **two or more** `.spike` files as positional arguments and
@@ -64,21 +65,14 @@ then the second's, and so on — a plain union, no filtering) with one extra
 downstream tools that expect a single file with the source distinction
 encoded as data rather than as separate files.
 
-- With `--format fits|hdf5`: parses all inputs and writes a table, as in
-  `convert`.
-- **Without `--format`** (the default): writes a pipe-delimited `.spike`
-  text file in the original format, with `target` appended as an extra
-  field on each line. Every other field is copied byte-for-byte from the
-  source files (no numeric reparsing/reformatting), so this mode is exact
-  and considerably faster than round-tripping through the parsed
-  representation.
+- `--format fits|hdf5` selects the output format (default: `hdf5`).
 - **`target` labeling** — three ways to control it:
   - **Default** (no `--targets`): each file's own name (stem) is used as
     its label, e.g. `"HIP63121"` / `"HIP63121_OFF"`.
-  - **`--targets <target_time.txt>`** (a single existing file path,
-    requires `--format`): time-based lookup, same as `convert`'s
-    `--targets` — resolves each row's actual observed target name and
-    writes it into `target`, replacing the filename-derived default.
+  - **`--targets <target_time.txt>`** (a single existing file path):
+    time-based lookup, same as `convert`'s `--targets` — resolves each
+    row's actual observed target name and writes it into `target`,
+    replacing the filename-derived default.
   - **`--targets <label1> --targets <label2> ...`** (one label per input
     file, repeat the flag once per file, same order as the files):
     explicit literal labels, e.g.
@@ -120,6 +114,11 @@ case-insensitive — matching `merge`'s own default filename-stem labels and
 its `_OFF`-suffix convention) — a plain `convert` output of a single source
 has no such column and is rejected with a clear error.
 
+By default every `plot` command opens the figure in an interactive
+matplotlib window instead of writing a file. Pass **`--save`** to write to
+disk instead (to the path given by `-o`/`--outdir`) — without `--save`,
+`-o`/`--outdir` is ignored.
+
 ```
 setisignals convert HIP63121_data/HIP63121.spike --format fits -o on.fits
 setisignals merge HIP63121_data/HIP63121.spike HIP63121_data/HIP63121_OFF.spike --format fits -o merged.fits
@@ -128,7 +127,8 @@ setisignals merge HIP63121_data/HIP63121.spike HIP63121_data/HIP63121_OFF.spike 
 #### `plot power-hist` — power distribution histogram
 
 ```
-setisignals plot power-hist on.fits -o power_hist.png
+setisignals plot power-hist on.fits                            # interactive window
+setisignals plot power-hist on.fits --save -o power_hist.png   # save to disk
 ```
 
 Log-log histogram of `peak_power/mean_power`, reproducing the paper's
@@ -137,7 +137,7 @@ Figure 2 style.
 #### `plot waterfall` — on/off frequency-time scatter
 
 ```
-setisignals plot waterfall merged.fits -o waterfall.png
+setisignals plot waterfall merged.fits --save -o waterfall.png
 ```
 
 Reproduces the paper's Figure 3: on-source hits in cyan, off-source in
@@ -146,7 +146,7 @@ magenta.
 #### `plot rfi` — RFI-vs-Clean density pair
 
 ```
-setisignals plot rfi merged.fits -o rfi_density.png
+setisignals plot rfi merged.fits --save -o rfi_density.png
 ```
 
 Grayscale, log-scaled 2D histograms (frequency x time) splitting hits into
@@ -155,7 +155,8 @@ RFI vs. Clean.
 #### `plot all` — generate all three figures
 
 ```
-setisignals plot all merged.fits --outdir figures/
+setisignals plot all merged.fits                          # 3 windows at once
+setisignals plot all merged.fits --save --outdir figures/  # save all 3 to figures/
 ```
 
 All commands accept `--workers N` (default: CPU count) to control Ray
@@ -163,6 +164,17 @@ parallelism, and `plot rfi` accepts `--gpu` to bin frequencies with `cupy`
 instead of NumPy inside each Ray task (requires the optional `gpu` extra:
 `uv sync --extra gpu`; marginal benefit at the current ~5M-row scale, mainly
 useful once the much larger `.pulse` files are supported).
+
+### Global options
+
+These go before the subcommand name, e.g. `setisignals --timestamp convert ...`:
+
+- `--log-dir <dir>` — directory for log files (default: `./logs`, created
+  if missing). Every run writes a plain-text `.log` and a structured
+  `.jsonl` file there, alongside console output.
+- `--timestamp` — on completion, log the command's total wall-clock runtime
+  (high-resolution, includes Ray startup).
+- `--version`/`-v` — print the installed version and exit.
 
 ## Approximate reproductions — read before trusting the plots
 
