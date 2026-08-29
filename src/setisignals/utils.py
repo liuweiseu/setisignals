@@ -108,6 +108,9 @@ def _resolve_log_dir(directory: Path) -> Path:
     return directory
 
 
+CONSOLE_FORMAT = "[%(name)s] %(message)s"
+
+
 def get_logger(
     service_name: str,
     console: bool = True,
@@ -155,7 +158,7 @@ def get_logger(
     if console and not any(isinstance(h, RichHandler) for h in logger.handlers):
         console_handler = RichHandler(rich_tracebacks=True, markup=False, show_path=False)
         console_handler.setLevel(resolved_console_level)
-        console_handler.setFormatter(logging.Formatter("[%(name)s] %(message)s"))
+        console_handler.setFormatter(logging.Formatter(CONSOLE_FORMAT))
         logger.addHandler(console_handler)
 
     if log_dir:
@@ -183,3 +186,26 @@ def get_logger(
                 logger.addHandler(jfh)
 
     return logger
+
+
+def mirror_logger(source: logging.Logger, target_name: str) -> logging.Logger:
+    """Route a third-party logger's records through `source`'s own handlers.
+
+    Some libraries (e.g. Ray) configure their own named logger at import/init
+    time, so its console/file output ends up in a different style from ours.
+    This replaces that logger's handlers with `source`'s (same console/file/
+    JSONL output, so the two are indistinguishable in the logs) and disables
+    propagation so records aren't also handled a second time via the root
+    logger.
+
+    Note this only affects records that actually go through Python's
+    `logging` module. It has no effect on a subprocess's raw stdout/stderr
+    forwarded by a library's own out-of-band log-shipping (e.g. Ray's
+    `(raylet) ...`-prefixed lines) -- those never reach `target_name`'s
+    logger at all.
+    """
+    target = logging.getLogger(target_name)
+    target.handlers = list(source.handlers)
+    target.setLevel(source.level)
+    target.propagate = False
+    return target

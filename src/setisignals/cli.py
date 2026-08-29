@@ -40,7 +40,7 @@ from setisignals.plotting.power_hist import compute_power_hist, plot_power_hist
 from setisignals.plotting.rfi_density import compute_rfi_density_grids, plot_rfi_density
 from setisignals.plotting.waterfall import plot_waterfall
 from setisignals.ray_utils import ray_session
-from setisignals.utils import get_logger
+from setisignals.utils import get_logger, mirror_logger
 
 _CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 _DEFAULT_LOG_DIR = Path("logs")
@@ -124,6 +124,7 @@ def main(
 ) -> None:
     global logger, _TIMESTAMP_ENABLED
     logger = get_logger(__name__, log_dir=log_dir)
+    mirror_logger(logger, "ray")
     _TIMESTAMP_ENABLED = timestamp
 
 
@@ -356,7 +357,7 @@ def power_hist_cmd(
     ] = False,
     output: Annotated[Path, typer.Option("-o", "--output")] = Path("power_hist.png"),
     workers: Annotated[int | None, typer.Option()] = None,
-    n_bins: Annotated[int, typer.Option()] = 100,
+    n_bins: Annotated[int, typer.Option()] = 2000,
 ) -> None:
     """Reproduce the power/mean-power distribution histogram."""
     workers = workers or _default_workers()
@@ -445,6 +446,7 @@ def plot_all_cmd(
     ] = False,
     outdir: Annotated[Path, typer.Option()] = Path("."),
     workers: Annotated[int | None, typer.Option()] = None,
+    n_bins: Annotated[int, typer.Option()] = 2000,
 ) -> None:
     """Generate all three figures (power-hist, waterfall, rfi) in one Ray session.
 
@@ -452,11 +454,15 @@ def plot_all_cmd(
     workers = workers or _default_workers()
     if save:
         outdir.mkdir(parents=True, exist_ok=True)
-    on_data, off_data = _split_on_off(_load_table(input), input)
+    data = _load_table(input)
+    on_data, off_data = _split_on_off(data, input)
 
     with ray_session(workers=workers):
+        # Power histogram covers all rows (on- and off-source combined), matching
+        # both the paper's Figure 2 (all spikes, not just on-source) and what a
+        # standalone `plot power-hist` run on this same file would compute.
         bin_edges, counts = compute_power_hist(
-            on_data["peak_power"], on_data["mean_power"], workers=workers
+            data["peak_power"], data["mean_power"], n_bins=n_bins, workers=workers
         )
         plot_power_hist(
             bin_edges, counts, outdir / "power_hist.png" if save else None, source_name=input.stem

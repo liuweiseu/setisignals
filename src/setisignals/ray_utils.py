@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 import ray
+
+from setisignals.utils import CONSOLE_FORMAT
 
 
 def chunk_file(path: Path, n_chunks: int) -> list[tuple[int, int]]:
@@ -39,8 +42,23 @@ def chunk_file(path: Path, n_chunks: int) -> list[tuple[int, int]]:
 
 @contextmanager
 def ray_session(workers: int | None = None, num_gpus: int = 0) -> Iterator[None]:
-    """Idempotent Ray init/shutdown context manager."""
-    ray.init(num_cpus=workers, num_gpus=num_gpus, ignore_reinit_error=True)
+    """Idempotent Ray init/shutdown context manager.
+
+    Passes `logging_format=CONSOLE_FORMAT` so `ray.init()`'s own internal
+    logging setup doesn't overwrite the formatter on the "ray" logger's
+    handlers with Ray's own default -- this matters when `utils.mirror_logger`
+    has pointed those handlers at ours (shared handler instances), since
+    Ray reformatting them would silently reformat our own logger's console
+    output too.
+    """
+    ray_logger_level = logging.getLogger("ray").level or logging.INFO
+    ray.init(
+        num_cpus=workers,
+        num_gpus=num_gpus,
+        ignore_reinit_error=True,
+        logging_level=ray_logger_level,
+        logging_format=CONSOLE_FORMAT,
+    )
     try:
         yield
     finally:

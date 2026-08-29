@@ -13,10 +13,16 @@ from setisignals.analysis.hist_utils import parallel_histogram
 def compute_power_hist(
     peak_power: np.ndarray,
     mean_power: np.ndarray,
-    n_bins: int = 100,
+    n_bins: int = 2000,
     workers: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Log-binned histogram of peak_power/mean_power. Returns (bin_edges, counts)."""
+    """Log-binned histogram of peak_power/mean_power. Returns (bin_edges, counts).
+
+    The default `n_bins=2000` is fine enough to reproduce the paper's Figure 2
+    look: a smooth power-law decline at low ratios giving way to a sparse,
+    visibly noisy (Poisson-fluctuating) tail at high ratios, rather than a
+    coarser, smoothed-out step plot.
+    """
     ratio = peak_power / mean_power
     ratio = ratio[ratio > 0]
     lo = max(ratio.min(), 1.0)

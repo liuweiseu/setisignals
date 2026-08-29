@@ -132,7 +132,10 @@ setisignals plot power-hist on.fits --save -o power_hist.png   # save to disk
 ```
 
 Log-log histogram of `peak_power/mean_power`, reproducing the paper's
-Figure 2 style.
+Figure 2 style: a smooth power-law decline at low ratios giving way to a
+sparse, visibly noisy tail at high ratios. `--n-bins` controls the log-bin
+count (default: `2000`, chosen to match that granularity — a much coarser
+value smooths away the noisy tail).
 
 #### `plot waterfall` — on/off frequency-time scatter
 
@@ -171,7 +174,12 @@ These go before the subcommand name, e.g. `setisignals --timestamp convert ...`:
 
 - `--log-dir <dir>` — directory for log files (default: `./logs`, created
   if missing). Every run writes a plain-text `.log` and a structured
-  `.jsonl` file there, alongside console output.
+  `.jsonl` file there, alongside console output. Ray's own Python-side
+  logging (cluster startup, `working_dir` packaging, etc.) is routed
+  through these same handlers so its console/file output matches ours;
+  the exception is raw subprocess output Ray forwards from its worker
+  processes (lines prefixed `(raylet)`, e.g. runtime-env `uv` output),
+  which bypasses Python logging entirely and can't be reformatted this way.
 - `--timestamp` — on completion, log the command's total wall-clock runtime
   (high-resolution, includes Ray startup).
 - `--version`/`-v` — print the installed version and exit.
