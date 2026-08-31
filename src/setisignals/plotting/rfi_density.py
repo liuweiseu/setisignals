@@ -116,6 +116,7 @@ def plot_rfi_density(
     fig, axes = plt.subplots(2, 1, figsize=(8, 10), sharex=True)
     extent = (freq_edges[0], freq_edges[-1], time_edges[0], time_edges[-1])
     norm = mcolors.LogNorm(vmin=1, vmax=max(rfi_grid.max(), clean_grid.max(), 1))
+    n_freq_bins = len(freq_edges) - 1
 
     for ax, grid, title in ((axes[0], rfi_grid, "RFI"), (axes[1], clean_grid, "Clean")):
         ax.imshow(
@@ -128,6 +129,17 @@ def plot_rfi_density(
         )
         ax.set_title(title, color="black", fontsize=13)
         ax.set_ylabel("Time (sec)")
+        ax.text(
+            0.98,
+            0.98,
+            f"{n_freq_bins:,} freq bins",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=9,
+            color="black",
+            bbox={"facecolor": "white", "alpha": 0.7, "edgecolor": "none", "pad": 2},
+        )
     axes[-1].set_xlabel("Frequency (Hz)")
     if source_name:
         fig.suptitle(f"RFI Density of {source_name}", fontsize=16)
