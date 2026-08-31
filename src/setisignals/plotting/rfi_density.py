@@ -75,11 +75,11 @@ def plot_rfi_density(
             cmap="gray_r",
             norm=norm,
         )
-        ax.set_title(title, color="red" if title == "RFI" else "black")
+        ax.set_title(title, color="black", fontsize=13)
         ax.set_ylabel("Time (sec)")
     axes[-1].set_xlabel("Frequency (Hz)")
     if source_name:
-        fig.suptitle(f"RFI Density of {source_name}")
+        fig.suptitle(f"RFI Density of {source_name}", fontsize=16)
         fig.tight_layout(rect=(0, 0, 1, 0.96))
     else:
         fig.tight_layout()

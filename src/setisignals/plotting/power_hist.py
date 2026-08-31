@@ -49,7 +49,7 @@ def plot_power_hist(
     ax.set_xlabel("Power/Mean Power")
     ax.set_ylabel("Number Found")
     if source_name:
-        ax.set_title(f"Power Histogram of {source_name}")
+        ax.set_title(f"Power Histogram of {source_name}", fontsize=16)
     fig.tight_layout()
     if out_path is not None:
         fig.savefig(out_path, dpi=150)

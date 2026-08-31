@@ -40,7 +40,7 @@ def plot_waterfall(
     ax.set_ylabel("Time (sec)")
     ax.legend(markerscale=20, loc="upper right")
     if source_name:
-        ax.set_title(f"Waterfall of {source_name}")
+        ax.set_title(f"Waterfall of {source_name}", fontsize=16)
     fig.tight_layout()
     if out_path is not None:
         fig.savefig(out_path, dpi=150)
