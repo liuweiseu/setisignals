@@ -24,8 +24,41 @@ figure below is computed from scratch (see below).
 
 ## Install
 
+Install as a standalone CLI tool with [uv](https://docs.astral.sh/uv/) —
+this puts `setisignals` on your `PATH` in an isolated environment, so you
+can run it from anywhere without cloning the repo into your cwd or manually
+managing a venv:
+
+```
+uv tool install git+https://github.com/liuweiseu/setisignals
+```
+
+Or from a local clone:
+
+```
+uv tool install .
+```
+
+Add the `gpu` extra (see `plot rfi --gpu` below) by appending `[gpu]` to
+whichever source you installed from, e.g. `uv tool install ".[gpu]"`.
+
+```
+setisignals --version
+```
+
+To upgrade or remove it later:
+
+```
+uv tool upgrade setisignals
+uv tool uninstall setisignals
+```
+
+For development (editable install, running the test suite, etc.), use
+`uv sync` instead and prefix commands with `uv run`:
+
 ```
 uv sync
+uv run setisignals ...
 ```
 
 ## Commands
