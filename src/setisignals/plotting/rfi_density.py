@@ -16,13 +16,16 @@ import numpy as np
 from setisignals.analysis.hist_utils import parallel_histogram2d
 from setisignals.analysis.rfi import DEFAULT_BIN_WIDTH_HZ
 from setisignals.analysis.time_utils import stack_combined_on_off
+from setisignals.utils import get_logger
+
+logger = get_logger(__name__)
 
 # Above this many bins, a fixed 93 Hz bin width would need more frequency
 # bins than the plot (and the memory backing it) can reasonably hold --
 # e.g. a merged multi-band file spanning several GHz would blow up to tens
 # of millions of bins. Fall back to a fixed bin count instead.
-MAX_FREQ_BINS = 8192
-FALLBACK_FREQ_BINS = 8192
+MAX_FREQ_BINS = 16384
+FALLBACK_FREQ_BINS = 16384
 
 
 def _native_freq_edges(freq: np.ndarray) -> np.ndarray:
@@ -75,13 +78,19 @@ def compute_rfi_density_grids(
 
     if freq_bin_width_hz is None:
         freq_edges = _native_freq_edges(freq)
+        logger.info(f"RFI density: using native frequency resolution ({len(freq_edges) - 1:,} bins)")
     else:
         lo, hi = freq.min(), freq.max()
         n_freq_bins = int(np.ceil((hi - lo) / freq_bin_width_hz)) + 1
         if n_freq_bins > MAX_FREQ_BINS:
             freq_edges = np.linspace(lo, hi, FALLBACK_FREQ_BINS + 1)
+            logger.info(
+                f"RFI density: {n_freq_bins:,} bins at {freq_bin_width_hz} Hz width exceeds "
+                f"MAX_FREQ_BINS ({MAX_FREQ_BINS:,}); falling back to {FALLBACK_FREQ_BINS:,} equal-width bins"
+            )
         else:
             freq_edges = lo + np.arange(n_freq_bins + 1) * freq_bin_width_hz
+            logger.info(f"RFI density: {n_freq_bins:,} frequency bins at {freq_bin_width_hz} Hz width")
     time_edges = np.linspace(y.min(), y.max(), time_bins + 1)
 
     rfi_grid = parallel_histogram2d(
