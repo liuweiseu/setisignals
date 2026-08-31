@@ -14,7 +14,31 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from setisignals.analysis.hist_utils import parallel_histogram2d
+from setisignals.analysis.rfi import DEFAULT_BIN_WIDTH_HZ
 from setisignals.analysis.time_utils import stack_combined_on_off
+
+# Above this many bins, a fixed 93 Hz bin width would need more frequency
+# bins than the plot (and the memory backing it) can reasonably hold --
+# e.g. a merged multi-band file spanning several GHz would blow up to tens
+# of millions of bins. Fall back to a fixed bin count instead.
+MAX_FREQ_BINS = 8192
+FALLBACK_FREQ_BINS = 8192
+
+
+def _native_freq_edges(freq: np.ndarray) -> np.ndarray:
+    """Bin edges giving one bin per distinct ``detection_freq`` value, so the
+    density grid reflects the data's actual frequency resolution instead of
+    an arbitrary equal-width approximation. Edges fall at the midpoints
+    between neighboring unique values."""
+    unique_freq = np.unique(freq)
+    if unique_freq.size < 2:
+        half = 0.5 if unique_freq.size == 0 else abs(unique_freq[0]) * 1e-6 or 0.5
+        center = unique_freq[0] if unique_freq.size else 0.0
+        return np.array([center - half, center + half])
+    mids = (unique_freq[:-1] + unique_freq[1:]) / 2.0
+    first_edge = unique_freq[0] - (mids[0] - unique_freq[0])
+    last_edge = unique_freq[-1] + (unique_freq[-1] - mids[-1])
+    return np.concatenate(([first_edge], mids, [last_edge]))
 
 
 def compute_rfi_density_grids(
@@ -22,7 +46,7 @@ def compute_rfi_density_grids(
     off: np.ndarray,
     on_is_rfi: np.ndarray,
     off_is_rfi: np.ndarray,
-    freq_bins: int = 200,
+    freq_bin_width_hz: float | None = DEFAULT_BIN_WIDTH_HZ,
     time_bins: int = 200,
     workers: int | None = None,
     expected_sessions: int | None = 3,
@@ -32,6 +56,16 @@ def compute_rfi_density_grids(
     Combines RFI hits from both on+off into one 2D histogram grid, and
     Clean hits from both on+off into another, matching the paper's
     "RFI" vs "Clean" density-pair framing.
+
+    ``freq_bin_width_hz`` defaults to the same window width used for RFI
+    classification (``analysis.rfi.DEFAULT_BIN_WIDTH_HZ``, 93 Hz); the
+    number of frequency bins is derived from the data's frequency range
+    divided by this width. If that would exceed ``MAX_FREQ_BINS`` (e.g. for
+    a merged file spanning a wide frequency range), it falls back to
+    ``FALLBACK_FREQ_BINS`` equal-width bins instead, to avoid building a
+    grid too large to fit in memory. Pass ``None`` instead to use the
+    data's native frequency resolution (one bin per unique
+    ``detection_freq`` value, see ``_native_freq_edges``).
     """
     on_y, off_y = stack_combined_on_off(on["time"], off["time"], dwells_per_source=expected_sessions)
 
@@ -39,7 +73,15 @@ def compute_rfi_density_grids(
     y = np.concatenate([on_y, off_y])
     is_rfi = np.concatenate([on_is_rfi, off_is_rfi])
 
-    freq_edges = np.linspace(freq.min(), freq.max(), freq_bins + 1)
+    if freq_bin_width_hz is None:
+        freq_edges = _native_freq_edges(freq)
+    else:
+        lo, hi = freq.min(), freq.max()
+        n_freq_bins = int(np.ceil((hi - lo) / freq_bin_width_hz)) + 1
+        if n_freq_bins > MAX_FREQ_BINS:
+            freq_edges = np.linspace(lo, hi, FALLBACK_FREQ_BINS + 1)
+        else:
+            freq_edges = lo + np.arange(n_freq_bins + 1) * freq_bin_width_hz
     time_edges = np.linspace(y.min(), y.max(), time_bins + 1)
 
     rfi_grid = parallel_histogram2d(
