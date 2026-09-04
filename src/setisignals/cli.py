@@ -24,7 +24,7 @@ if "--save" in sys.argv:
 import matplotlib.pyplot as plt
 import numpy as np
 
-from setisignals.analysis.rfi import DEFAULT_BIN_WIDTH_HZ, classify_rfi
+from setisignals.analysis.rfi import DEFAULT_RFI_PROB, MIN_GROUP_SAMPLES, classify_rfi
 from setisignals.analysis.time_utils import restrict_to_epoch
 from setisignals.io.merge import merge_files
 from setisignals.io.reader import read_with_progress
@@ -411,7 +411,21 @@ def rfi_cmd(
     ] = False,
     output: Annotated[Path, typer.Option("-o", "--output")] = Path("rfi_density.png"),
     workers: Annotated[int | None, typer.Option()] = None,
-    bin_width_hz: Annotated[float, typer.Option()] = DEFAULT_BIN_WIDTH_HZ,
+    rfi_prob: Annotated[
+        float,
+        typer.Option(help="Target random-coincidence probability per frequency bin (adaptive mode)"),
+    ] = DEFAULT_RFI_PROB,
+    bin_width_hz: Annotated[
+        float | None,
+        typer.Option(help="Force one fixed frequency-bin width (Hz) instead of adaptive per-fft_len binning"),
+    ] = None,
+    min_group_samples: Annotated[
+        int,
+        typer.Option(
+            help="Below this many on/off hits in an fft_len group, skip adaptive calibration "
+            "and use the native FFT-resolution bin width instead"
+        ),
+    ] = MIN_GROUP_SAMPLES,
     gpu: Annotated[bool, typer.Option()] = False,
 ) -> None:
     """Reproduce the RFI-vs-Clean grayscale density pair (approximate)."""
@@ -422,7 +436,11 @@ def rfi_cmd(
         on_is_rfi, off_is_rfi = classify_rfi(
             on_data["detection_freq"],
             off_data["detection_freq"],
+            on_data["fft_len"],
+            off_data["fft_len"],
+            rfi_prob=rfi_prob,
             bin_width_hz=bin_width_hz,
+            min_group_samples=min_group_samples,
             workers=workers,
         )
         rfi_grid, clean_grid, freq_edges, time_edges = compute_rfi_density_grids(
@@ -478,7 +496,11 @@ def plot_all_cmd(
         )
 
         on_is_rfi, off_is_rfi = classify_rfi(
-            on_epoch_data["detection_freq"], off_data["detection_freq"], workers=workers
+            on_epoch_data["detection_freq"],
+            off_data["detection_freq"],
+            on_epoch_data["fft_len"],
+            off_data["fft_len"],
+            workers=workers,
         )
         rfi_grid, clean_grid, freq_edges, time_edges = compute_rfi_density_grids(
             on_epoch_data, off_data, on_is_rfi, off_is_rfi, workers=workers

@@ -117,8 +117,14 @@ def plot_rfi_density(
     extent = (freq_edges[0], freq_edges[-1], time_edges[0], time_edges[-1])
     norm = mcolors.LogNorm(vmin=1, vmax=max(rfi_grid.max(), clean_grid.max(), 1))
     n_freq_bins = len(freq_edges) - 1
+    n_rfi = int(rfi_grid.sum())
+    n_clean = int(clean_grid.sum())
+    n_total = n_rfi + n_clean
 
-    for ax, grid, title in ((axes[0], rfi_grid, "RFI"), (axes[1], clean_grid, "Clean")):
+    for ax, grid, title, n_count in (
+        (axes[0], rfi_grid, "RFI", n_rfi),
+        (axes[1], clean_grid, "Clean", n_clean),
+    ):
         ax.imshow(
             grid.T,
             origin="lower",
@@ -129,6 +135,18 @@ def plot_rfi_density(
         )
         ax.set_title(title, color="black", fontsize=13)
         ax.set_ylabel("Time (sec)")
+        pct = 100 * n_count / n_total if n_total else 0.0
+        ax.text(
+            0.02,
+            0.98,
+            f"{n_count:,}/{n_total:,} ({pct:.1f}%)",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=9,
+            color="black",
+            bbox={"facecolor": "white", "alpha": 0.7, "edgecolor": "none", "pad": 2},
+        )
         ax.text(
             0.98,
             0.98,
