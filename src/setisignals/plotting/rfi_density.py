@@ -16,6 +16,7 @@ import numpy as np
 from setisignals.analysis.hist_utils import parallel_histogram2d
 from setisignals.analysis.rfi import DEFAULT_BIN_WIDTH_HZ
 from setisignals.analysis.time_utils import stack_combined_on_off
+from setisignals.io.targets import split_on_off
 from setisignals.utils import get_logger
 
 logger = get_logger(__name__)
@@ -45,10 +46,8 @@ def _native_freq_edges(freq: np.ndarray) -> np.ndarray:
 
 
 def compute_rfi_density_grids(
-    on: np.ndarray,
-    off: np.ndarray,
-    on_is_rfi: np.ndarray,
-    off_is_rfi: np.ndarray,
+    rfi_data: np.ndarray,
+    clean_data: np.ndarray,
     freq_bin_width_hz: float | None = DEFAULT_BIN_WIDTH_HZ,
     time_bins: int = 200,
     workers: int | None = None,
@@ -56,13 +55,15 @@ def compute_rfi_density_grids(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return (rfi_grid, clean_grid, freq_edges, time_edges).
 
-    Combines RFI hits from both on+off into one 2D histogram grid, and
-    Clean hits from both on+off into another, matching the paper's
-    "RFI" vs "Clean" density-pair framing.
+    ``rfi_data``/``clean_data`` are the two already-classified tables written
+    by `classify-rfi` (each combining on+off rows for that class, with a
+    `target` column identifying which). Combines RFI hits from both on+off
+    into one 2D histogram grid, and Clean hits from both on+off into
+    another, matching the paper's "RFI" vs "Clean" density-pair framing.
 
-    ``freq_bin_width_hz`` defaults to the same window width used for RFI
-    classification (``analysis.rfi.DEFAULT_BIN_WIDTH_HZ``, 93 Hz); the
-    number of frequency bins is derived from the data's frequency range
+    ``freq_bin_width_hz`` defaults to the same window width historically used
+    for RFI classification (``analysis.rfi.DEFAULT_BIN_WIDTH_HZ``, 93 Hz);
+    the number of frequency bins is derived from the data's frequency range
     divided by this width. If that would exceed ``MAX_FREQ_BINS`` (e.g. for
     a merged file spanning a wide frequency range), it falls back to
     ``FALLBACK_FREQ_BINS`` equal-width bins instead, to avoid building a
@@ -70,9 +71,27 @@ def compute_rfi_density_grids(
     data's native frequency resolution (one bin per unique
     ``detection_freq`` value, see ``_native_freq_edges``).
     """
-    on_y, off_y = stack_combined_on_off(on["time"], off["time"], dwells_per_source=expected_sessions)
+    rfi_on, rfi_off = split_on_off(rfi_data)
+    clean_on, clean_off = split_on_off(clean_data)
 
-    freq = np.concatenate([on["detection_freq"], off["detection_freq"]])
+    # stack_combined_on_off needs the *full* on-source and off-source time
+    # series together to detect dwell/session boundaries correctly -- so the
+    # two classes' on/off rows are recombined here before stacking, then
+    # re-split back into an RFI/Clean mask over the recombined order.
+    on_time = np.concatenate([rfi_on["time"], clean_on["time"]])
+    off_time = np.concatenate([rfi_off["time"], clean_off["time"]])
+    on_y, off_y = stack_combined_on_off(on_time, off_time, dwells_per_source=expected_sessions)
+
+    on_freq = np.concatenate([rfi_on["detection_freq"], clean_on["detection_freq"]])
+    off_freq = np.concatenate([rfi_off["detection_freq"], clean_off["detection_freq"]])
+    on_is_rfi = np.concatenate(
+        [np.ones(rfi_on.size, dtype=bool), np.zeros(clean_on.size, dtype=bool)]
+    )
+    off_is_rfi = np.concatenate(
+        [np.ones(rfi_off.size, dtype=bool), np.zeros(clean_off.size, dtype=bool)]
+    )
+
+    freq = np.concatenate([on_freq, off_freq])
     y = np.concatenate([on_y, off_y])
     is_rfi = np.concatenate([on_is_rfi, off_is_rfi])
 

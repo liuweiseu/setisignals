@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from setisignals.io.merge import merge_files
 from setisignals.io.reader import read_spike_file
 from setisignals.io.targets import (
     TargetWindow,
@@ -10,6 +11,7 @@ from setisignals.io.targets import (
     looks_like_off_source,
     parse_targets_file,
     resolve_target_names,
+    split_on_off,
 )
 from setisignals.ray_utils import ray_session
 
@@ -97,3 +99,30 @@ def test_resolve_target_names_without_is_off_shows_the_overlap_ambiguity():
 
     # Without is_off, the later-listed window wins -- documented ambiguity.
     assert names[0] == b"HIP63121_O"
+
+
+def test_split_on_off_recovers_on_and_off_rows():
+    on = read_spike_file(FIXTURES / "tiny_on.spike", workers=1, progress=False)
+    off = read_spike_file(FIXTURES / "tiny_off.spike", workers=1, progress=False)
+    merged = merge_files([on, off], ["HIP63121", "HIP63121_OFF"])
+
+    split_on, split_off = split_on_off(merged)
+
+    np.testing.assert_array_equal(split_on["id"], on["id"])
+    np.testing.assert_array_equal(split_off["id"], off["id"])
+
+
+def test_split_on_off_no_target_column_raises():
+    on = read_spike_file(FIXTURES / "tiny_on.spike", workers=1, progress=False)
+    with pytest.raises(ValueError, match="target"):
+        split_on_off(on)
+
+
+def test_split_on_off_no_off_variant_label_raises():
+    on = read_spike_file(FIXTURES / "tiny_on.spike", workers=1, progress=False)
+    off = read_spike_file(FIXTURES / "tiny_off.spike", workers=1, progress=False)
+    # Neither label looks off-source -> can't distinguish on from off.
+    merged = merge_files([on, off], ["HIP63121", "HIP63121_2"])
+
+    with pytest.raises(ValueError, match="doesn't distinguish"):
+        split_on_off(merged)

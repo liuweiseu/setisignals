@@ -40,3 +40,22 @@ def write_table(
         )
     else:
         raise ValueError(f"unsupported format: {fmt!r}")
+
+
+def write_classified_tables(
+    on_data: np.ndarray,
+    off_data: np.ndarray,
+    on_is_rfi: np.ndarray,
+    off_is_rfi: np.ndarray,
+    rfi_path: Path,
+    clean_path: Path,
+    fmt: Literal["fits", "hdf5"] = "hdf5",
+) -> None:
+    """Write on+off hits classified as RFI/Clean to two separate tables.
+
+    ``on_data``/``off_data`` must share one dtype (e.g. both are boolean-index
+    slices of one table split by `target`, as `io.targets.split_on_off`
+    produces) so the on/off rows for each class can be concatenated directly.
+    """
+    write_table(np.concatenate([on_data[on_is_rfi], off_data[off_is_rfi]]), rfi_path, fmt)
+    write_table(np.concatenate([on_data[~on_is_rfi], off_data[~off_is_rfi]]), clean_path, fmt)

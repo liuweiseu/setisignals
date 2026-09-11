@@ -30,12 +30,12 @@ from setisignals.io.merge import merge_files
 from setisignals.io.reader import read_with_progress
 from setisignals.io.table_reader import SUPPORTED_SUFFIXES, read_table_file
 from setisignals.io.targets import (
-    is_off_variant,
     looks_like_off_source,
     parse_targets_file,
     resolve_target_names,
+    split_on_off,
 )
-from setisignals.io.writer import write_table
+from setisignals.io.writer import write_classified_tables, write_table
 from setisignals.plotting.power_hist import compute_power_hist, plot_power_hist
 from setisignals.plotting.rfi_density import compute_rfi_density_grids, plot_rfi_density
 from setisignals.plotting.waterfall import plot_waterfall
@@ -191,37 +191,12 @@ def _load_table(path: Path) -> np.ndarray:
 
 
 def _split_on_off(data: np.ndarray, path: Path) -> tuple[np.ndarray, np.ndarray]:
-    """Split a single merged table into (on_data, off_data) via its `target` column.
-
-    On/off plots take one input file (the output of `merge`) rather than
-    separate --on/--off files; the on/off distinction lives in that file's
-    `target` column instead. Off-source rows are identified by
-    `is_off_variant` (a label ending in _OFF/_OF/_O, or exactly "off").
-    """
-    if "target" not in (data.dtype.names or ()):
-        raise typer.BadParameter(
-            f"{path} has no `target` column -- on/off plots need a single file "
-            "produced by `merge` (which has both on-source and off-source rows "
-            "distinguished by `target`)"
-        )
-
-    def _decode(value: object) -> str:
-        return value.decode() if isinstance(value, bytes) else str(value)
-
-    target_col = data["target"]
-    unique_labels = np.unique(target_col)
-    off_labels = [lbl for lbl in unique_labels if is_off_variant(_decode(lbl))]
-    is_off = np.isin(target_col, off_labels) if off_labels else np.zeros(data.size, dtype=bool)
-
-    on_data, off_data = data[~is_off], data[is_off]
-    if on_data.size == 0 or off_data.size == 0:
-        labels_repr = ", ".join(repr(_decode(lbl)) for lbl in unique_labels)
-        raise typer.BadParameter(
-            f"{path}'s `target` column doesn't distinguish on-source from "
-            f"off-source rows (labels found: {labels_repr}) -- on/off plots need "
-            'both (an off-source label should end in _OFF/_OF/_O, or be exactly "off")'
-        )
-    return on_data, off_data
+    """`io.targets.split_on_off`, translating its ``ValueError`` into a
+    `typer.BadParameter` that names the offending ``path``."""
+    try:
+        return split_on_off(data)
+    except ValueError as e:
+        raise typer.BadParameter(f"{path}: {e}") from e
 
 
 @app.command()
@@ -348,6 +323,57 @@ _PLOT_ON_OFF_INPUT_HELP = (
 )
 
 
+@app.command("classify-rfi")
+@_timed("classify-rfi")
+def classify_rfi_cmd(
+    input: Annotated[Path, typer.Argument(help=_PLOT_ON_OFF_INPUT_HELP)],
+    rfi_output: Annotated[Path, typer.Option("--rfi-output", help="Output path for RFI-classified hits")] = Path(
+        "rfi.hdf5"
+    ),
+    clean_output: Annotated[
+        Path, typer.Option("--clean-output", help="Output path for Clean-classified hits")
+    ] = Path("clean.hdf5"),
+    workers: Annotated[int | None, typer.Option()] = None,
+    rfi_prob: Annotated[
+        float,
+        typer.Option(help="Target random-coincidence probability per frequency bin (adaptive mode)"),
+    ] = DEFAULT_RFI_PROB,
+    bin_width_hz: Annotated[
+        float | None,
+        typer.Option(help="Force one fixed frequency-bin width (Hz) instead of adaptive per-fft_len binning"),
+    ] = None,
+    min_group_samples: Annotated[
+        int,
+        typer.Option(
+            help="Below this many on/off hits in an fft_len group, skip adaptive calibration "
+            "and use the native FFT-resolution bin width instead"
+        ),
+    ] = MIN_GROUP_SAMPLES,
+    gpu: Annotated[bool, typer.Option()] = False,
+) -> None:
+    """Classify on/off hits as RFI or Clean; write rfi.hdf5/clean.hdf5.
+
+    Splits into two tables (each combining on+off rows for that class,
+    keeping the `target` column) for downstream analysis or `plot rfi`.
+    """
+    workers = workers or _default_workers()
+    on_data, off_data = _split_on_off(_load_table(input), input)
+    with ray_session(workers=workers, num_gpus=1 if gpu else 0):
+        on_data = _restrict_on_to_off_epoch(on_data, off_data)
+        on_is_rfi, off_is_rfi = classify_rfi(
+            on_data["detection_freq"],
+            off_data["detection_freq"],
+            on_data["fft_len"],
+            off_data["fft_len"],
+            rfi_prob=rfi_prob,
+            bin_width_hz=bin_width_hz,
+            min_group_samples=min_group_samples,
+            workers=workers,
+        )
+    write_classified_tables(on_data, off_data, on_is_rfi, off_is_rfi, rfi_output, clean_output)
+    logger.info(f"Wrote {rfi_output}, {clean_output}")
+
+
 @plot_app.command("power-hist")
 @_timed("plot power-hist")
 def power_hist_cmd(
@@ -405,117 +431,35 @@ def waterfall_cmd(
 @plot_app.command("rfi")
 @_timed("plot rfi")
 def rfi_cmd(
-    input: Annotated[Path, typer.Argument(help=_PLOT_ON_OFF_INPUT_HELP)],
+    rfi_input: Annotated[Path, typer.Argument(help="Path to rfi.hdf5, as produced by `classify-rfi`")],
+    clean_input: Annotated[Path, typer.Argument(help="Path to clean.hdf5, as produced by `classify-rfi`")],
     save: Annotated[
         bool, typer.Option("--save", help="Save to disk instead of displaying interactively")
     ] = False,
     output: Annotated[Path, typer.Option("-o", "--output")] = Path("rfi_density.png"),
     workers: Annotated[int | None, typer.Option()] = None,
-    rfi_prob: Annotated[
-        float,
-        typer.Option(help="Target random-coincidence probability per frequency bin (adaptive mode)"),
-    ] = DEFAULT_RFI_PROB,
-    bin_width_hz: Annotated[
-        float | None,
-        typer.Option(help="Force one fixed frequency-bin width (Hz) instead of adaptive per-fft_len binning"),
+    source_name: Annotated[
+        str | None, typer.Option(help="Plot title source name; defaults to rfi_input's stem")
     ] = None,
-    min_group_samples: Annotated[
-        int,
-        typer.Option(
-            help="Below this many on/off hits in an fft_len group, skip adaptive calibration "
-            "and use the native FFT-resolution bin width instead"
-        ),
-    ] = MIN_GROUP_SAMPLES,
-    gpu: Annotated[bool, typer.Option()] = False,
 ) -> None:
-    """Reproduce the RFI-vs-Clean grayscale density pair (approximate)."""
+    """Reproduce the RFI-vs-Clean grayscale density pair from already-classified data."""
     workers = workers or _default_workers()
-    on_data, off_data = _split_on_off(_load_table(input), input)
-    with ray_session(workers=workers, num_gpus=1 if gpu else 0):
-        on_data = _restrict_on_to_off_epoch(on_data, off_data)
-        on_is_rfi, off_is_rfi = classify_rfi(
-            on_data["detection_freq"],
-            off_data["detection_freq"],
-            on_data["fft_len"],
-            off_data["fft_len"],
-            rfi_prob=rfi_prob,
-            bin_width_hz=bin_width_hz,
-            min_group_samples=min_group_samples,
-            workers=workers,
-        )
+    rfi_data = _load_table(rfi_input)
+    clean_data = _load_table(clean_input)
+    with ray_session(workers=workers):
         rfi_grid, clean_grid, freq_edges, time_edges = compute_rfi_density_grids(
-            on_data, off_data, on_is_rfi, off_is_rfi, workers=workers
+            rfi_data, clean_data, workers=workers
         )
     plot_rfi_density(
-        rfi_grid, clean_grid, freq_edges, time_edges, output if save else None, source_name=input.stem
+        rfi_grid,
+        clean_grid,
+        freq_edges,
+        time_edges,
+        output if save else None,
+        source_name=source_name or rfi_input.stem,
     )
     if save:
         logger.info(f"Wrote {output}")
-    else:
-        plt.show()
-
-
-@plot_app.command("all")
-@_timed("plot all")
-def plot_all_cmd(
-    input: Annotated[Path, typer.Argument(help=_PLOT_ON_OFF_INPUT_HELP)],
-    save: Annotated[
-        bool, typer.Option("--save", help="Save to disk instead of displaying interactively")
-    ] = False,
-    outdir: Annotated[Path, typer.Option()] = Path("."),
-    workers: Annotated[int | None, typer.Option()] = None,
-    n_bins: Annotated[int, typer.Option()] = 2000,
-) -> None:
-    """Generate all three figures (power-hist, waterfall, rfi) in one Ray session.
-
-    Without --save, all three figures are displayed interactively at once."""
-    workers = workers or _default_workers()
-    if save:
-        outdir.mkdir(parents=True, exist_ok=True)
-    data = _load_table(input)
-    on_data, off_data = _split_on_off(data, input)
-
-    with ray_session(workers=workers):
-        # Power histogram covers all rows (on- and off-source combined), matching
-        # both the paper's Figure 2 (all spikes, not just on-source) and what a
-        # standalone `plot power-hist` run on this same file would compute.
-        bin_edges, counts = compute_power_hist(
-            data["peak_power"], data["mean_power"], n_bins=n_bins, workers=workers
-        )
-        plot_power_hist(
-            bin_edges, counts, outdir / "power_hist.png" if save else None, source_name=input.stem
-        )
-
-        on_epoch_data = _restrict_on_to_off_epoch(on_data, off_data)
-
-        plot_waterfall(
-            on_epoch_data,
-            off_data,
-            outdir / "waterfall.png" if save else None,
-            source_name=input.stem,
-        )
-
-        on_is_rfi, off_is_rfi = classify_rfi(
-            on_epoch_data["detection_freq"],
-            off_data["detection_freq"],
-            on_epoch_data["fft_len"],
-            off_data["fft_len"],
-            workers=workers,
-        )
-        rfi_grid, clean_grid, freq_edges, time_edges = compute_rfi_density_grids(
-            on_epoch_data, off_data, on_is_rfi, off_is_rfi, workers=workers
-        )
-        plot_rfi_density(
-            rfi_grid,
-            clean_grid,
-            freq_edges,
-            time_edges,
-            outdir / "rfi_density.png" if save else None,
-            source_name=input.stem,
-        )
-
-    if save:
-        logger.info(f"Wrote power_hist.png, waterfall.png, rfi_density.png to {outdir}")
     else:
         plt.show()
 

@@ -5,7 +5,7 @@ import pytest
 
 from setisignals.io.reader import read_spike_file
 from setisignals.io.table_reader import read_table_file
-from setisignals.io.writer import write_table
+from setisignals.io.writer import write_classified_tables, write_table
 from setisignals.ray_utils import ray_session
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -46,3 +46,25 @@ def test_read_table_file_unsupported_suffix(tmp_path):
     bogus.write_text("not a table\n")
     with pytest.raises(ValueError):
         read_table_file(bogus)
+
+
+def test_write_classified_tables_splits_by_mask(tmp_path):
+    on = read_spike_file(FIXTURES / "tiny_on.spike", workers=1, progress=False)
+    off = read_spike_file(FIXTURES / "tiny_off.spike", workers=1, progress=False)
+    on_is_rfi = np.zeros(on.size, dtype=bool)
+    on_is_rfi[0] = True
+    off_is_rfi = np.zeros(off.size, dtype=bool)
+    off_is_rfi[1] = True
+
+    rfi_path = tmp_path / "rfi.hdf5"
+    clean_path = tmp_path / "clean.hdf5"
+    write_classified_tables(on, off, on_is_rfi, off_is_rfi, rfi_path, clean_path, fmt="hdf5")
+
+    rfi_data = read_table_file(rfi_path)
+    clean_data = read_table_file(clean_path)
+
+    assert len(rfi_data) + len(clean_data) == on.size + off.size
+    np.testing.assert_array_equal(rfi_data["id"], np.concatenate([on["id"][on_is_rfi], off["id"][off_is_rfi]]))
+    np.testing.assert_array_equal(
+        clean_data["id"], np.concatenate([on["id"][~on_is_rfi], off["id"][~off_is_rfi]])
+    )

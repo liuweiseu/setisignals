@@ -63,6 +63,42 @@ def looks_like_off_source(path: Path) -> bool:
     return path.stem.upper().endswith("_OFF")
 
 
+def split_on_off(data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Split a single merged table into (on_data, off_data) via its `target` column.
+
+    On/off commands take one input file (the output of `merge`) rather than
+    separate --on/--off files; the on/off distinction lives in that file's
+    `target` column instead. Off-source rows are identified by
+    `is_off_variant` (a label ending in _OFF/_OF/_O, or exactly "off").
+
+    Raises ``ValueError`` if `data` has no `target` column, or if `target`
+    doesn't actually distinguish on-source from off-source rows.
+    """
+    if "target" not in (data.dtype.names or ()):
+        raise ValueError(
+            "no `target` column -- on/off commands need a single file produced by "
+            "`merge` (which has both on-source and off-source rows distinguished by `target`)"
+        )
+
+    def _decode(value: object) -> str:
+        return value.decode() if isinstance(value, bytes) else str(value)
+
+    target_col = data["target"]
+    unique_labels = np.unique(target_col)
+    off_labels = [lbl for lbl in unique_labels if is_off_variant(_decode(lbl))]
+    is_off = np.isin(target_col, off_labels) if off_labels else np.zeros(data.size, dtype=bool)
+
+    on_data, off_data = data[~is_off], data[is_off]
+    if on_data.size == 0 or off_data.size == 0:
+        labels_repr = ", ".join(repr(_decode(lbl)) for lbl in unique_labels)
+        raise ValueError(
+            f"`target` column doesn't distinguish on-source from off-source rows "
+            f"(labels found: {labels_repr}) -- on/off commands need both (an "
+            'off-source label should end in _OFF/_OF/_O, or be exactly "off")'
+        )
+    return on_data, off_data
+
+
 @ray.remote
 def _resolve_shard(
     time_shard: np.ndarray, windows: list[tuple[bytes, float, float]], dtype_str: str
