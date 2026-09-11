@@ -39,7 +39,7 @@ Or from a local clone:
 uv tool install .
 ```
 
-Add the `gpu` extra (see `plot rfi --gpu` below) by appending `[gpu]` to
+Add the `gpu` extra (see `classify-rfi --gpu` below) by appending `[gpu]` to
 whichever source you installed from, e.g. `uv tool install ".[gpu]"`.
 
 ```
@@ -131,26 +131,55 @@ and non-off-variant names otherwise. On the real HIP63121 data this resolves
 → `HIP63121_O`); the remainder have no matching time window at all
 (edge-of-window rows just outside the recorded start/end).
 
+### `classify-rfi` — classify hits as RFI or Clean
+
+```
+setisignals classify-rfi merged.fits --rfi-output rfi.h5 --clean-output clean.h5
+```
+
+Takes a **`merge` output** (a single file whose `target` column
+distinguishes on-source rows from off-source rows — see `merge` above) and
+classifies every hit as RFI or Clean via on/off frequency-bin coincidence
+(`analysis/rfi.py:classify_rfi`, see "Approximate reproductions" below).
+Writes two output tables (`--rfi-output`/`--clean-output`, default
+`rfi.hdf5`/`clean.hdf5`), each combining on+off rows for that class and
+keeping the `target` column so downstream consumers can still tell which
+rows were on- vs off-source.
+
+Tuning options:
+- `--rfi-prob` (default `0.01`) — target probability of a purely-random
+  on/off coincidence per frequency bin (adaptive mode).
+- `--bin-width-hz` — force one fixed frequency-bin width (Hz) across the
+  whole dataset instead of the adaptive per-`fft_len` calculation.
+- `--min-group-samples` (default `1000`) — below this many on/off hits in an
+  `fft_len` group, skip the adaptive calibration and use that group's native
+  FFT-resolution bin width instead.
+- `--gpu` — bin frequencies with `cupy` instead of NumPy inside each Ray task
+  (requires the optional `gpu` extra: `uv sync --extra gpu`; marginal benefit
+  at the current ~5M-row scale, mainly useful once the much larger `.pulse`
+  files are supported).
+
 ### `plot` — reproduce figures (FITS/HDF5 input only)
 
 `plot` commands read the standard table formats this tool writes, not raw
-`.spike` text, and every `plot` command takes exactly **one** input file
-(`.fits`/`.fit`/`.h5`/`.hdf5`; passing a `.spike` file is rejected with a
-clear error).
+`.spike` text (passing a `.spike` file is rejected with a clear error), and
+they do no signal processing themselves — classification happens in
+`classify-rfi` above, not here.
 
-`plot power-hist` accepts any single `convert` or `merge` output. The other
-three (`waterfall`, `rfi`, `all`) compare on-source against off-source, so
-their one input must be a **`merge` output** whose `target` column
-distinguishes on-source rows from off-source rows (an off-source label is
-recognized if it ends in `_OFF`/`_OF`/`_O`, or is exactly `"off"`,
-case-insensitive — matching `merge`'s own default filename-stem labels and
-its `_OFF`-suffix convention) — a plain `convert` output of a single source
-has no such column and is rejected with a clear error.
+- `plot power-hist` accepts **one or more** `convert`/`merge` outputs.
+- `plot waterfall` compares on-source against off-source, so its one input
+  must be a **`merge` output** whose `target` column distinguishes them (an
+  off-source label is recognized if it ends in `_OFF`/`_OF`/`_O`, or is
+  exactly `"off"`, case-insensitive — matching `merge`'s own default
+  filename-stem labels and its `_OFF`-suffix convention).
+- `plot density` takes **one or more** on/off tables (e.g. the two outputs
+  of `classify-rfi`, `rfi.hdf5`/`clean.hdf5`, or any other on/off split you
+  want to compare) — one subplot per input.
 
 By default every `plot` command opens the figure in an interactive
 matplotlib window instead of writing a file. Pass **`--save`** to write to
-disk instead (to the path given by `-o`/`--outdir`) — without `--save`,
-`-o`/`--outdir` is ignored.
+disk instead (to the path given by `-o`/`--output`) — without `--save`,
+`-o`/`--output` is ignored.
 
 ```
 setisignals convert HIP63121_data/HIP63121.spike --format fits -o on.fits
@@ -162,13 +191,16 @@ setisignals merge HIP63121_data/HIP63121.spike HIP63121_data/HIP63121_OFF.spike 
 ```
 setisignals plot power-hist on.fits                            # interactive window
 setisignals plot power-hist on.fits --save -o power_hist.png   # save to disk
+setisignals plot power-hist on.fits off.fits --save -o power_hist.png   # overlay both
 ```
 
 Log-log histogram of `peak_power/mean_power`, reproducing the paper's
 Figure 2 style: a smooth power-law decline at low ratios giving way to a
 sparse, visibly noisy tail at high ratios. `--n-bins` controls the log-bin
 count (default: `2000`, chosen to match that granularity — a much coarser
-value smooths away the noisy tail).
+value smooths away the noisy tail). Passing multiple input files overlays
+each one's histogram on the same axes in its own color, labeled by
+filename stem in the legend, instead of plotting just one.
 
 #### `plot waterfall` — on/off frequency-time scatter
 
@@ -179,27 +211,23 @@ setisignals plot waterfall merged.fits --save -o waterfall.png
 Reproduces the paper's Figure 3: on-source hits in cyan, off-source in
 magenta.
 
-#### `plot rfi` — RFI-vs-Clean density pair
+#### `plot density` — frequency-vs-time 2D density plot(s)
 
 ```
-setisignals plot rfi merged.fits --save -o rfi_density.png
+setisignals classify-rfi merged.fits --rfi-output rfi.h5 --clean-output clean.h5
+setisignals plot density rfi.h5 clean.h5 --save -o density.png   # RFI-vs-Clean pair
+setisignals plot density rfi.h5 --save -o rfi_only.png           # a single density plot
 ```
 
-Grayscale, log-scaled 2D histograms (frequency x time) splitting hits into
-RFI vs. Clean.
-
-#### `plot all` — generate all three figures
-
-```
-setisignals plot all merged.fits                          # 3 windows at once
-setisignals plot all merged.fits --save --outdir figures/  # save all 3 to figures/
-```
+Grayscale, log-scaled 2D histogram (frequency x time) of each input table,
+one subplot per file, titled by that file's name (without its extension) —
+e.g. the `rfi.hdf5`/`clean.hdf5` pair from `classify-rfi` reproduces the
+paper's RFI-vs-Clean density pair, but any on/off table(s) can be passed.
+`--source-name` overrides the overall figure title (default: the single
+input's filename stem, omitted when passing multiple inputs).
 
 All commands accept `--workers N` (default: CPU count) to control Ray
-parallelism, and `plot rfi` accepts `--gpu` to bin frequencies with `cupy`
-instead of NumPy inside each Ray task (requires the optional `gpu` extra:
-`uv sync --extra gpu`; marginal benefit at the current ~5M-row scale, mainly
-useful once the much larger `.pulse` files are supported).
+parallelism.
 
 ### Global options
 
@@ -219,26 +247,45 @@ These go before the subcommand name, e.g. `setisignals --timestamp convert ...`:
 
 ## Approximate reproductions — read before trusting the plots
 
-The paper doesn't give exact algorithms for two things this tool
+The paper doesn't give exact algorithms for three things this tool
 reconstructs from first principles:
 
-- **On/off dwell stacking (`waterfall`, `rfi`)**: real observing dwells for
-  a target are interleaved in time (on, off, on, off, ...), not independent
-  sequences. Dwell/session boundaries are detected via gaps in the
-  *combined* on+off time series (`analysis/time_utils.py:detect_sessions`,
+- **On/off dwell stacking (`waterfall`, `plot density`)**: real observing dwells
+  for a target are interleaved in time (on, off, on, off, ...), not
+  independent sequences. Dwell/session boundaries are detected via gaps in
+  the *combined* on+off time series (`analysis/time_utils.py:detect_sessions`,
   `stack_combined_on_off`), then each dwell is stacked with a vertical
   offset so bands don't overlap. This is a best-effort visual match, not a
   literal decode of how the original figures were built.
-- **RFI classification (`rfi`)**: a hit is marked RFI if its `detection_freq`
-  falls in the same ~93 Hz-wide frequency bin as a hit from the opposite
-  on/off dataset (`analysis/rfi.py:classify_rfi`). The paper states the
-  window width and the ~1% false-coincidence rationale but not the exact
-  binning/matching implementation.
-- **Epoch restriction (`waterfall`, `rfi`)**: `HIP63121.spike` bundles hits
-  from more than one observing epoch (a ~525-day-later re-observation at a
-  different receiver band is mixed into the same file). Before pairing with
-  the single-epoch off-source file, on-source hits are restricted to the
-  epoch that overlaps the off-source time range
+- **RFI classification (`classify-rfi`)**: ported from the paper's IDL
+  analysis pipeline (`idl/compare_on_off.pro`), which is more elaborate than
+  a single fixed window: hits are grouped by `fft_len` (different FFT
+  lengths have different native frequency resolutions,
+  `subband_sample_rate / fft_len`), and each group's frequency-bin width is
+  solved for so a purely-random on/off coincidence has about `--rfi-prob`
+  probability (default 1%), calibrated against that group's actual hit
+  density rather than assumed uniform (`analysis/rfi.py:classify_rfi`,
+  `_solve_bin_size`). Each group is also binned twice, offset by half a bin,
+  so a real coincidence straddling a bin edge isn't missed. Passing
+  `--bin-width-hz` skips all of this and reproduces the simpler fixed-width
+  behavior (matching on/off hits within one fixed window across the whole
+  dataset, e.g. the paper's ~93 Hz figure) instead.
+
+  **Caveat**: on the real HIP63121 data, this adaptive calibration tags a
+  much larger fraction of hits as RFI (roughly 66-99%, worse at coarser
+  `fft_len` resolutions with fewer hits) than the old fixed ~93 Hz window
+  did (~19%) — the median-based bin search widens the bin to compensate for
+  how unevenly real hits are distributed across the band, which on this
+  dataset ends up far wider than a uniform-density assumption would predict.
+  `--min-group-samples` skips that calibration for genuinely small groups,
+  but doesn't change this for the well-sampled ones. Sanity-check the
+  RFI/Clean split on your own data before trusting it; `--bin-width-hz`
+  is the fallback if the adaptive result looks wrong.
+- **Epoch restriction (`waterfall`, `classify-rfi`)**: `HIP63121.spike`
+  bundles hits from more than one observing epoch (a ~525-day-later
+  re-observation at a different receiver band is mixed into the same file).
+  Before pairing with the single-epoch off-source file, on-source hits are
+  restricted to the epoch that overlaps the off-source time range
   (`analysis/time_utils.py:restrict_to_epoch`) — otherwise axis ranges and
   dwell counts are thrown off by the unrelated later observation.
 

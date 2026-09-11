@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -32,22 +33,30 @@ def compute_power_hist(
     return bin_edges, counts
 
 
+_OVERLAY_COLORS = plt.get_cmap("tab10").colors
+
+
 def plot_power_hist(
-    bin_edges: np.ndarray,
-    counts: np.ndarray,
+    series: list[tuple[np.ndarray, np.ndarray, str]],
     out_path: Path | None,
     source_name: str | None = None,
 ) -> None:
-    """Render the plot. If ``out_path`` is None, the figure is left open for
-    the caller to display (e.g. via a single ``plt.show()`` covering several
-    figures) instead of being saved to disk."""
-    centers = np.sqrt(bin_edges[:-1] * bin_edges[1:])
+    """Render the plot. ``series`` is a list of ``(bin_edges, counts, label)``
+    -- one entry per input file, each drawn in its own color with ``label``
+    in the legend (the legend is omitted for a single entry). If
+    ``out_path`` is None, the figure is left open for the caller to display
+    (e.g. via a single ``plt.show()`` covering several figures) instead of
+    being saved to disk."""
     fig, ax = plt.subplots(figsize=(7, 6))
-    ax.step(centers, counts, where="mid", color="black", linewidth=0.8)
+    for (bin_edges, counts, label), color in zip(series, itertools.cycle(_OVERLAY_COLORS)):
+        centers = np.sqrt(bin_edges[:-1] * bin_edges[1:])
+        ax.step(centers, counts, where="mid", color=color, linewidth=0.8, label=label)
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("Power/Mean Power")
     ax.set_ylabel("Number Found")
+    if len(series) > 1:
+        ax.legend(fontsize=8)
     if source_name:
         ax.set_title(f"Power Histogram of {source_name}", fontsize=16)
     fig.tight_layout()

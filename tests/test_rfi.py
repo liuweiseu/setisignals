@@ -78,7 +78,7 @@ def test_solve_bin_size_caps_to_max_bins_per_group():
     # Dense, evenly-spaced hits (one per Hz) keep the density-based bin_size
     # pinned at bin_floor -- which, over a wide enough range, still implies
     # far more bins than max_bins_per_group allows. Must be capped rather
-    # than left to blow up memory (see the rfi_density plotting module's
+    # than left to blow up memory (see the density plotting module's
     # MAX_FREQ_BINS fix for the same class of issue).
     on_freq_g = np.arange(10_000, dtype=float)
     lo, hi = 0.0, 10_000.0

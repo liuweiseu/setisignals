@@ -36,8 +36,8 @@ from setisignals.io.targets import (
     split_on_off,
 )
 from setisignals.io.writer import write_classified_tables, write_table
+from setisignals.plotting.density import compute_density_grids, plot_density
 from setisignals.plotting.power_hist import compute_power_hist, plot_power_hist
-from setisignals.plotting.rfi_density import compute_rfi_density_grids, plot_rfi_density
 from setisignals.plotting.waterfall import plot_waterfall
 from setisignals.ray_utils import ray_session
 from setisignals.utils import get_logger, mirror_logger
@@ -377,22 +377,34 @@ def classify_rfi_cmd(
 @plot_app.command("power-hist")
 @_timed("plot power-hist")
 def power_hist_cmd(
-    input: Annotated[Path, typer.Argument(help=_PLOT_INPUT_HELP)],
+    inputs: Annotated[list[Path], typer.Argument(help=_PLOT_INPUT_HELP)],
     save: Annotated[
         bool, typer.Option("--save", help="Save to disk instead of displaying interactively")
     ] = False,
     output: Annotated[Path, typer.Option("-o", "--output")] = Path("power_hist.png"),
     workers: Annotated[int | None, typer.Option()] = None,
     n_bins: Annotated[int, typer.Option()] = 2000,
+    source_name: Annotated[
+        str | None,
+        typer.Option(help="Plot title; defaults to the single input's filename stem (omitted if multiple inputs)"),
+    ] = None,
 ) -> None:
-    """Reproduce the power/mean-power distribution histogram."""
+    """Reproduce the power/mean-power distribution histogram.
+
+    With multiple inputs, each is overlaid on the same axes in its own
+    color, labeled by filename stem in the legend.
+    """
     workers = workers or _default_workers()
-    data = _load_table(input)
     with ray_session(workers=workers):
-        bin_edges, counts = compute_power_hist(
-            data["peak_power"], data["mean_power"], n_bins=n_bins, workers=workers
-        )
-    plot_power_hist(bin_edges, counts, output if save else None, source_name=input.stem)
+        series = []
+        for path in inputs:
+            data = _load_table(path)
+            bin_edges, counts = compute_power_hist(
+                data["peak_power"], data["mean_power"], n_bins=n_bins, workers=workers
+            )
+            series.append((bin_edges, counts, path.stem))
+    title = source_name or (inputs[0].stem if len(inputs) == 1 else None)
+    plot_power_hist(series, output if save else None, source_name=title)
     if save:
         logger.info(f"Wrote {output}")
     else:
@@ -428,36 +440,33 @@ def waterfall_cmd(
         plt.show()
 
 
-@plot_app.command("rfi")
-@_timed("plot rfi")
-def rfi_cmd(
-    rfi_input: Annotated[Path, typer.Argument(help="Path to rfi.hdf5, as produced by `classify-rfi`")],
-    clean_input: Annotated[Path, typer.Argument(help="Path to clean.hdf5, as produced by `classify-rfi`")],
+@plot_app.command("density")
+@_timed("plot density")
+def density_cmd(
+    inputs: Annotated[
+        list[Path],
+        typer.Argument(
+            help=f"{_PLOT_ON_OFF_INPUT_HELP} One or more; e.g. the rfi.hdf5/clean.hdf5 pair from `classify-rfi`."
+        ),
+    ],
     save: Annotated[
         bool, typer.Option("--save", help="Save to disk instead of displaying interactively")
     ] = False,
-    output: Annotated[Path, typer.Option("-o", "--output")] = Path("rfi_density.png"),
+    output: Annotated[Path, typer.Option("-o", "--output")] = Path("density.png"),
     workers: Annotated[int | None, typer.Option()] = None,
     source_name: Annotated[
-        str | None, typer.Option(help="Plot title source name; defaults to rfi_input's stem")
+        str | None,
+        typer.Option(help="Overall figure title; defaults to the single input's filename stem (omitted if multiple inputs)"),
     ] = None,
 ) -> None:
-    """Reproduce the RFI-vs-Clean grayscale density pair from already-classified data."""
+    """Plot a frequency-vs-time 2D density histogram, one subplot per input (titled by filename stem)."""
     workers = workers or _default_workers()
-    rfi_data = _load_table(rfi_input)
-    clean_data = _load_table(clean_input)
+    tables = [_load_table(p) for p in inputs]
     with ray_session(workers=workers):
-        rfi_grid, clean_grid, freq_edges, time_edges = compute_rfi_density_grids(
-            rfi_data, clean_data, workers=workers
-        )
-    plot_rfi_density(
-        rfi_grid,
-        clean_grid,
-        freq_edges,
-        time_edges,
-        output if save else None,
-        source_name=source_name or rfi_input.stem,
-    )
+        grids, freq_edges, time_edges = compute_density_grids(tables, workers=workers)
+    titles = [p.stem for p in inputs]
+    title = source_name or (inputs[0].stem if len(inputs) == 1 else None)
+    plot_density(grids, titles, freq_edges, time_edges, output if save else None, source_name=title)
     if save:
         logger.info(f"Wrote {output}")
     else:
